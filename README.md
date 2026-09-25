@@ -44,6 +44,4 @@ Default runner mode enables broad Copilot tools but denies destructive/history-c
 
 The package intentionally does not copy BrandForge's quality gate or service-specific agents. Add a project-local `harness.yaml` (optional) with focused verification commands and read it from the project's orchestrator prompt. Keep credentials in environment/secret stores, never task files.
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the lifecycle map and
-[`docs/PORTING_FROM_BRANDFORGE.md`](docs/PORTING_FROM_BRANDFORGE.md) for the
-migration boundary from the original project-specific setup.
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the lifecycle map.
