@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "project-task-harness"
+version = "0.1.0"
+description = "Portable task packages and Copilot delivery harness"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+dependencies = []
+
+[project.scripts]
+task-harness = "task_harness.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.data-files]
+"share/project-task-harness/templates" = ["templates/deliver-task.prompt.md", "templates/task-status.yaml"]
+"share/project-task-harness/templates/task-package" = ["templates/task-package/INDEX.md", "templates/task-package/spec.md", "templates/task-package/issues/001-task.md"]
+"share/project-task-harness/templates/agents" = ["templates/agents/task-harness-orchestrator.agent.md", "templates/agents/task-harness-implementer.agent.md", "templates/agents/task-harness-reviewer.agent.md", "templates/agents/task-harness-test-engineer.agent.md", "templates/agents/task-harness-evidence-auditor.agent.md", "templates/agents/task-harness-committer.agent.md"]
+"share/project-task-harness" = ["harness.yaml.example"]
