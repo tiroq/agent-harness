@@ -1,0 +1,12 @@
+status: pending
+created_at: "YYYY-MM-DD"
+started_at: null
+completed_at: null
+audited_at: null
+last_run_id: null
+last_agent_session: null
+related_commits: []
+audit_report: null
+implementation_confidence: null
+summary: ""
+result: ""
