@@ -1,0 +1,12 @@
+workflow:
+  tasks_root: .scratch
+  artifacts_root: .copilot-workflow
+  status_file: task-status.yaml
+  default_model: gpt-5.3-codex
+  max_autopilot_continues: 100
+  quality_commands: []
+  deny_shell_patterns:
+    - "git push"
+    - "git reset"
+    - "rm -rf"
+    - "pip install"
