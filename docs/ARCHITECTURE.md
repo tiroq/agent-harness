@@ -21,6 +21,17 @@ task-status.yaml (pending -> in_progress -> done/blocked/failed)
 The package owns lifecycle policy and reusable roles. The host project owns
 source code, tests, secrets, quality commands, deployment, and domain agents.
 
+## Typed core boundary
+
+Deterministic orchestration semantics live in `task_harness.core` so CLI and
+future MCP adapters can share one implementation boundary:
+
+- role-report provenance validation at intake;
+- mandatory pre-audit prerequisite gate decisions;
+- normalized baseline environment fingerprints for task-vs-baseline evidence;
+- typed blocked vs failure outcome taxonomy;
+- role invocation usage tracking.
+
 ## Filesystem contract
 
 - `.scratch/` contains task packages; optional `todo/` and `done/` buckets are

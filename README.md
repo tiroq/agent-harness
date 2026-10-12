@@ -36,6 +36,16 @@ The orchestrator contract expects five independent boundaries:
 
 Projects can add provider-specific agents under `.github/agents/` without changing this package.
 
+## Typed orchestration core
+
+`task_harness.core` provides frontend-agnostic typed primitives for deterministic orchestration:
+
+- role report intake and provenance validation (`ROLE`, `GENERATED_BY_ROLE`, `AGENT_SESSION_ID`);
+- pre-audit mandatory-prerequisite gate decisions (skip auditor when a known-red mandatory gate already failed);
+- baseline environment normalization and SHA-256 fingerprinting for reproducible baseline-vs-task evidence;
+- explicit delivery outcome taxonomy (`BLOCKED_*`, `WAITING_EXTERNAL`, `FAILED_IMPLEMENTATION`, `REWORK`);
+- per-role invocation tracking for usage-aware orchestration.
+
 ## Tool permissions
 
 Default runner mode enables broad Copilot tools but denies destructive/history-changing commands, pushes, privilege escalation, recursive chmod, and ad-hoc dependency installation. Use `--narrow-tools` for a project with stricter policy. The deny-list is a safety boundary, not a replacement for code review.
