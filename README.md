@@ -44,7 +44,12 @@ Projects can add provider-specific agents under `.github/agents/` without changi
 - pre-audit mandatory-prerequisite gate decisions (skip auditor when a known-red mandatory gate already failed);
 - baseline environment normalization and SHA-256 fingerprinting for reproducible baseline-vs-task evidence;
 - explicit delivery outcome taxonomy (`BLOCKED_*`, `WAITING_EXTERNAL`, `FAILED_IMPLEMENTATION`, `REWORK`);
-- per-role invocation tracking for usage-aware orchestration.
+- per-role invocation tracking for usage-aware orchestration;
+- repository/issue/branch/worktree identity + ownership classification primitives;
+- typed lifecycle phase transitions including `REWORK` and blocked/failure outcome routing;
+- runtime configuration precedence resolver (`request -> repository policy -> environment -> defaults`);
+- authoritative issue packet materialization helpers with bounded latest-comment emphasis;
+- typed parsing for refresh-helper exact-SHA evidence fields.
 
 ## Tool permissions
 

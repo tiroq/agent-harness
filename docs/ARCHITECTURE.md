@@ -30,7 +30,12 @@ future MCP adapters can share one implementation boundary:
 - mandatory pre-audit prerequisite gate decisions;
 - normalized baseline environment fingerprints for task-vs-baseline evidence;
 - typed blocked vs failure outcome taxonomy;
-- role invocation usage tracking.
+- role invocation usage tracking;
+- repository/issue/branch/worktree identity models and ownership classification;
+- explicit lifecycle-phase transition helpers (including `REWORK` + blocked/failed routing);
+- typed runtime-config precedence resolution and host-policy adapter contract;
+- authoritative issue/comment packet materialization;
+- refresh-helper evidence parsing for typed exact-SHA/freshness state.
 
 ## Filesystem contract
 
