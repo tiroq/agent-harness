@@ -166,6 +166,12 @@ def issue_run(
             plan["verdict"] = "DRY_RUN"
         return plan
 
+    orchestrator = preflight.worktree / ".github" / "agents" / "task-harness-orchestrator.agent.md"
+    if not orchestrator.is_file():
+        raise IssueExecutionError(
+            "repository-scoped Copilot orchestrator agent is missing; "
+            "refusing to spend a session on an unregistered agent"
+        )
     if shutil.which("copilot") is None:
         raise IssueExecutionError("Copilot CLI missing; no Issue run started")
     # Linux process birth identity is mandatory for safe cancel/dedup.
@@ -191,6 +197,13 @@ def issue_run(
                 raise IssueExecutionError("remote PR branch changed during execution preflight")
             if _remote_head(root.resolve(), "main") != preflight.main_sha:
                 raise IssueExecutionError("main advanced during execution preflight")
+            # Reject a race where another actor mutates the worktree after
+            # the initial GitHub preflight but before the process is launched.
+            from .issue_preflight import _run as git_query
+            if git_query(preflight.worktree, "git", "rev-parse", "HEAD") != preflight.head_sha:
+                raise IssueExecutionError("local Issue HEAD changed after preflight")
+            if git_query(preflight.worktree, "git", "status", "--porcelain"):
+                raise IssueExecutionError("Issue worktree became dirty after preflight")
         except IssuePreflightError as exc:
             raise IssueExecutionError(f"remote prelaunch check failed: {exc}") from exc
 
