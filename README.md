@@ -16,6 +16,8 @@ task-harness list --root . --short
 task-harness run --root . --tasks-dir .scratch/todo/my-feature --dry-run
 task-harness queue --root . --tasks-dir .scratch/todo --limit 2
 task-harness queue --root . --tasks-dir .scratch/todo --select
+# Read-only GitHub Issue / existing PR / worktree preflight (no Copilot):
+task-harness issue-preflight --root . --issue 1 --repo tiroq/agent-harness --expected-head <40-character-pr-sha> --dry-run
 ```
 
 The runner passes the prompt to `copilot` on stdin. This avoids the common `Invalid command format` failure caused by treating an unquoted multiline prompt as separate CLI arguments.
@@ -50,6 +52,29 @@ Projects can add provider-specific agents under `.github/agents/` without changi
 - runtime configuration precedence resolver (`request -> repository policy -> environment -> defaults`);
 - authoritative issue packet materialization helpers with bounded latest-comment emphasis;
 - typed parsing for refresh-helper exact-SHA evidence fields.
+
+## GitHub Issue preflight (incremental Phase B/D)
+
+The `issue-preflight` command is a **read-only** gate for the next
+Issue-scoped delivery stage. Run it from the repository's **main checkout**,
+with an existing `.worktree/issue-<number>` on the open PR's issue branch.
+It validates the origin repository identity, clean local main equal to remote
+main, registered clean issue worktree, issue-encoded branch ownership, exact
+local/remote head, current integration ancestry, exactly one open PR on
+`main`, and the live GitHub Issue body and paginated comments. It uses the
+typed `IssueWorktree` and `materialize_issue_packet` primitives in memory.
+
+A successful `issue-preflight` prints the Issue/PR/SHAs and latest
+comment ID, but **never** launches Copilot, publishes/merges a PR, writes
+artifacts or changes branch/worktree state. The `--dry-run` switch is
+accepted for operator clarity; the command is always read-only. Nonzero
+exit code 4 signals a fail-closed preflight blocker. It needs `git`, an
+authenticated `gh` CLI and GitHub access.
+
+This is NOT yet the full typed Issue execution engine, run/cancel controller,
+MCP backend or publication/readiness state machine described by Issue #1.
+Those remain future phases; a passing preflight must not be taken as
+authorization to bypass exact-head review/CI or as proof of migration parity.
 
 ## Tool permissions
 
