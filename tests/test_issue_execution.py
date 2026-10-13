@@ -18,6 +18,9 @@ def controlled_issue(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     root.mkdir()
     worktree = root / ".worktree" / "issue-1"
     worktree.mkdir(parents=True)
+    agent = worktree / ".github" / "agents" / "task-harness-orchestrator.agent.md"
+    agent.parent.mkdir(parents=True)
+    agent.write_text("---\\nname: task-harness-orchestrator\\n---\\n")
     snapshot = IssuePreflightResult(
         repository="tiroq/agent-harness",
         issue_number=1,
@@ -147,6 +150,15 @@ def test_real_launch_uses_existing_pr_and_records_session_exit(controlled_issue,
         issue_preflight, "_remote_head",
         lambda _root, branch: MAIN if branch == "main" else HEAD,
     )
+    def git_query(cwd: Path, *cmd: str) -> str:
+        assert cwd == worktree
+        if cmd == ("git", "rev-parse", "HEAD"):
+            return HEAD
+        if cmd == ("git", "status", "--porcelain"):
+            return ""
+        raise AssertionError(f"unexpected prelaunch git query: {cmd}")
+
+    monkeypatch.setattr(issue_preflight, "_run", git_query)
     output = tmp_path / "output.txt"
     output.write_bytes(b"Copilot session output\n")
 
