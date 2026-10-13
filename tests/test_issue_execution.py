@@ -199,3 +199,21 @@ def test_cli_status_does_not_mutate_files(controlled_issue, capsys):
     assert main(["issue-status", "--root", str(root), "--issue", "1"]) == 0
     assert '"status": "NOT_STARTED"' in capsys.readouterr().out
     assert not (root / ".copilot-workflow").exists()
+
+
+def test_missing_orchestrator_blocks_launch(controlled_issue):
+    root, worktree, _ = controlled_issue
+    (worktree / ".github" / "agents" / "task-harness-orchestrator.agent.md").unlink()
+    with pytest.raises(execution.IssueExecutionError, match="orchestrator agent is missing"):
+        execution.issue_run(root, 1, execute=True)
+    assert not (root / ".copilot-workflow").exists()
+
+
+def test_issue_run_default_does_not_require_copilot_binary(controlled_issue, monkeypatch):
+    root, _, _ = controlled_issue
+    monkeypatch.setattr(execution.shutil, "which", lambda _tool: None)
+    result = execution.issue_run(root, 1)
+    assert result["verdict"] == "DRY_RUN"
+    with pytest.raises(execution.IssueExecutionError, match="Copilot CLI missing"):
+        execution.issue_run(root, 1, execute=True)
+    assert not (root / ".copilot-workflow").exists()
