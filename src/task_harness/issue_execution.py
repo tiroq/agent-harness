@@ -22,7 +22,7 @@ from .core.lifecycle import DeliveryPhase
 from .issue_preflight import IssuePreflightError, IssuePreflightResult, inspect_issue
 
 _MAX_LOG_BYTES = 2 * 1024 * 1024
-_ACTIVE = frozenset({"RUNNING", "CANCEL_REQUESTED"})
+_ACTIVE = frozenset({"STARTING", "RUNNING", "CANCEL_REQUESTED"})
 
 
 class IssueExecutionError(RuntimeError):
@@ -156,13 +156,14 @@ def issue_run(
         "model": model,
     }
     if not execute:
-        with _guard(root, issue) as path:
-            previous = _load(path)
-            if _active_state(previous):
-                plan["verdict"] = "BLOCKED_ACTIVE_RUN"
-                plan["active_run_id"] = previous["run_id"]
-            else:
-                plan["verdict"] = "DRY_RUN"
+        # Dry-run must remain read-only; even creating a lock would violate
+        # its contract and could make a formerly clean repository dirty.
+        previous = _load(_paths(root, issue)[0])
+        if _active_state(previous):
+            plan["verdict"] = "BLOCKED_ACTIVE_RUN"
+            plan["active_run_id"] = previous["run_id"]
+        else:
+            plan["verdict"] = "DRY_RUN"
         return plan
 
     if shutil.which("copilot") is None:
