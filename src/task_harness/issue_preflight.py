@@ -132,8 +132,9 @@ def inspect_issue(
     *,
     expected_head: str | None = None,
     expected_repo: str | None = None,
+    allow_dirty: bool = False,
 ) -> IssuePreflightResult:
-    """Verify existing Issue/worktree/PR identity without making any changes."""
+    """Verify Issue/PR identity without changes; allow dirty only for explicit resume."""
     if issue_number < 1:
         raise IssuePreflightError("issue number must be positive")
     root = root.resolve(strict=True)
@@ -182,7 +183,7 @@ def inspect_issue(
     ]
     if len(matching) != 1:
         raise IssuePreflightError("Issue worktree is not registered on expected branch")
-    if _run(worktree, "git", "status", "--porcelain"):
+    if _run(worktree, "git", "status", "--porcelain") and not allow_dirty:
         raise IssuePreflightError("Issue worktree has uncommitted changes")
     head_sha = _sha(_run(worktree, "git", "rev-parse", "HEAD"), field="Issue HEAD")
     if expected_head is not None and head_sha != _sha(expected_head, field="expected head"):
