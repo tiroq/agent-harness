@@ -181,7 +181,7 @@ def queue_tasks(root: Path, tasks_dir: str, model: str, limit: int | None, selec
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="task-harness")
-    parser.add_argument("command", choices=("init", "list", "run", "queue", "issue-preflight", "issue-run", "issue-status", "issue-cancel"))
+    parser.add_argument("command", choices=("init", "list", "run", "queue", "issue-preflight", "issue-run", "issue-resume", "issue-status", "issue-reconcile", "issue-cancel"))
     parser.add_argument("--root", default=".")
     parser.add_argument("--issue", type=int, help="GitHub Issue number for issue-preflight")
     parser.add_argument("--expected-head", help="Expected 40-character PR head SHA")
@@ -197,22 +197,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--select", action="store_true")
     args = parser.parse_args(argv)
     root = Path(args.root).resolve()
-    if args.command in {"issue-run", "issue-status", "issue-cancel"}:
+    if args.command in {"issue-run", "issue-resume", "issue-status", "issue-reconcile", "issue-cancel"}:
         if args.issue is None:
             parser.error(f"{args.command} requires --issue")
         from task_harness.issue_execution import (
             IssueExecutionError,
             issue_cancel,
             issue_run,
+            issue_reconcile,
             issue_status,
         )
-        if args.command == "issue-run":
+        if args.command in {"issue-run", "issue-resume"}:
             if args.execute and args.dry_run:
                 parser.error("--execute and --dry-run are mutually exclusive")
             if args.execute and (not args.repo or not args.expected_head):
-                parser.error("issue-run --execute requires --repo and --expected-head")
+                parser.error(f"{args.command} --execute requires --repo and --expected-head")
         try:
-            if args.command == "issue-run":
+            if args.command in {"issue-run", "issue-resume"}:
                 status = issue_run(
                     root,
                     args.issue,
@@ -220,9 +221,12 @@ def main(argv: list[str] | None = None) -> int:
                     expected_head=args.expected_head,
                     model=args.model,
                     execute=args.execute,
+                    resume=args.command == "issue-resume",
                 )
             elif args.command == "issue-status":
                 status = issue_status(root, args.issue)
+            elif args.command == "issue-reconcile":
+                status = issue_reconcile(root, args.issue)
             else:
                 status = issue_cancel(root, args.issue)
         except (IssuePreflightError, IssueExecutionError, OSError, ValueError) as exc:
@@ -230,11 +234,13 @@ def main(argv: list[str] | None = None) -> int:
             return 4
         import json
         print(json.dumps(status, indent=2, sort_keys=True, default=str))
-        if args.command == "issue-run" and args.execute:
+        if args.command in {"issue-run", "issue-resume"} and args.execute:
             if status.get("status") == "CANCELLED":
                 return 130
             return 0 if status.get("status") == "SESSION_EXITED" else 1
-        if args.command == "issue-run" and status.get("verdict") == "BLOCKED_ACTIVE_RUN":
+        if args.command in {"issue-run", "issue-resume"} and str(status.get("verdict", "")).startswith("BLOCKED_"):
+            return 4
+        if args.command == "issue-reconcile" and str(status.get("recovery", "")).startswith("BLOCKED_"):
             return 4
         return 0
     if args.command == "issue-preflight":
