@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+from .core.copilot_cli import copilot_arguments
 from .core.lifecycle import DeliveryPhase
 from .issue_preflight import IssuePreflightError, IssuePreflightResult, inspect_issue
 
@@ -178,9 +179,7 @@ def issue_run(
     if not _boot_id() or not Path("/proc/self/stat").is_file():
         raise IssueExecutionError("safe process identity requires Linux /proc")
 
-    # Import the mature existing CLI policy instead of copying its deny-list.
-    from .cli import copilot_arguments
-
+    # Reuse the same invocation contract as the portable task runner.
     run_id = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + secrets.token_hex(5)
     artifacts = root.resolve() / ".copilot-workflow" / "runs" / run_id
     prompt = _prompt(preflight)
