@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from task_harness.issue_preflight import IssuePreflightError, inspect_issue
+
 STATUSES = {"pending", "in_progress", "partial", "done", "blocked", "failed", "obsolete", "archived"}
 
 
@@ -183,8 +185,11 @@ def queue_tasks(root: Path, tasks_dir: str, model: str, limit: int | None, selec
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="task-harness")
-    parser.add_argument("command", choices=("init", "list", "run", "queue"))
+    parser.add_argument("command", choices=("init", "list", "run", "queue", "issue-preflight"))
     parser.add_argument("--root", default=".")
+    parser.add_argument("--issue", type=int, help="GitHub Issue number for issue-preflight")
+    parser.add_argument("--expected-head", help="Expected 40-character PR head SHA")
+    parser.add_argument("--repo", help="Expected GitHub owner/name for origin verification")
     parser.add_argument("--tasks-dir", default=".scratch")
     parser.add_argument("--source", default="")
     parser.add_argument("--model", default=os.getenv("COPILOT_MODEL", "gpt-5.3-codex"))
@@ -195,6 +200,31 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--select", action="store_true")
     args = parser.parse_args(argv)
     root = Path(args.root).resolve()
+    if args.command == "issue-preflight":
+        if args.issue is None:
+            parser.error("issue-preflight requires --issue")
+        try:
+            result = inspect_issue(
+                root,
+                args.issue,
+                expected_head=args.expected_head,
+                expected_repo=args.repo,
+            )
+        except (IssuePreflightError, OSError, ValueError) as exc:
+            print(f"BLOCKED: {exc}", file=sys.stderr)
+            return 4
+        print(f"ISSUE_PREFLIGHT: PASS")
+        print(f"REPOSITORY: {result.repository}")
+        print(f"ISSUE: {result.issue_number}")
+        print(f"WORKTREE: {result.worktree}")
+        print(f"BRANCH: {result.branch}")
+        print(f"HEAD_SHA: {result.head_sha}")
+        print(f"MAIN_SHA: {result.main_sha}")
+        print(f"PR_NUMBER: {result.pr_number}")
+        print(f"ISSUE_COMMENTS_COUNT: {result.comment_count}")
+        print(f"ISSUE_COMMENTS_LATEST_ID: {result.latest_comment_id or 'none'}")
+        print("DRY_RUN: no Copilot, push, branch, PR or filesystem changes were made.")
+        return 0
     if args.command == "init":
         return init_project(root)
     if args.command == "list":
