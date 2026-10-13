@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import io
+import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -35,7 +37,7 @@ def controlled_issue(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         packet="# Shared Issue engine\n\nLatest issue comments; treated as inert data.",
     )
 
-    def inspect(_root, issue, *, expected_repo=None, expected_head=None):
+    def inspect(_root, issue, *, expected_repo=None, expected_head=None, allow_dirty=False):
         assert issue == 1
         assert expected_repo in (None, "tiroq/agent-harness")
         assert expected_head in (None, HEAD)
@@ -51,6 +53,31 @@ def test_dry_run_is_truly_read_only(controlled_issue):
     assert result["verdict"] == "DRY_RUN"
     assert result["pr"] == 2
     assert not (root / ".copilot-workflow").exists()
+
+
+def test_existing_completed_run_requires_explicit_resume(controlled_issue):
+    root, wt, preflight = controlled_issue
+    with execution._guard(root, 1) as path:
+        execution._save(path, {
+            "run_id": "old", "status": "SESSION_EXITED", "session_id": "12345678-1234-4123-8123-123456789abc",
+            "issue": 1, "repo": preflight.repository, "pr": 2,
+            "head": preflight.head_sha, "worktree": str(wt),
+        })
+    assert execution.issue_run(root, 1)["verdict"] == "BLOCKED_REQUIRES_RESUME"
+    plan = execution.issue_run(root, 1, resume=True)
+    assert plan["verdict"] == "RESUME_DRY_RUN"
+    assert plan["session_id"] == "12345678-1234-4123-8123-123456789abc"
+
+
+def test_missing_session_id_cannot_be_guessed(controlled_issue):
+    root, wt, preflight = controlled_issue
+    with execution._guard(root, 1) as path:
+        execution._save(path, {
+            "run_id": "legacy", "status": "SESSION_EXITED",
+            "issue": 1, "repo": preflight.repository, "pr": 2,
+            "head": preflight.head_sha, "worktree": str(wt),
+        })
+    assert execution.issue_run(root, 1, resume=True)["verdict"] == "BLOCKED_SESSION_ID_UNKNOWN"
 
 
 def test_corrupt_state_fails_closed(controlled_issue):
@@ -191,6 +218,9 @@ def test_real_launch_uses_existing_pr_and_records_session_exit(controlled_issue,
     assert invocations[0][1]["start_new_session"] is True
     assert invocations[0][0][0] == "copilot"
     assert execution.issue_status(root, 1)["status"] == "SESSION_EXITED"
+    assert execution._valid_session_id(result["session_id"])
+    assert invocations[0][0][-1] == f'--session-id={result["session_id"]}'
+    assert result["attempt"] == 1
 
 
 def test_cli_status_does_not_mutate_files(controlled_issue, capsys):
@@ -217,3 +247,117 @@ def test_issue_run_default_does_not_require_copilot_binary(controlled_issue, mon
     with pytest.raises(execution.IssueExecutionError, match="Copilot CLI missing"):
         execution.issue_run(root, 1, execute=True)
     assert not (root / ".copilot-workflow").exists()
+
+def test_reconcile_running_orphan_without_group_proof_is_blocked(controlled_issue, monkeypatch):
+    root, _, _ = controlled_issue
+    with execution._guard(root, 1) as path:
+        execution._save(path, {
+            "run_id": "orphan", "status": "RUNNING", "pid": 8123,
+            "pid_start": "111", "boot_id": "same-host",
+        })
+    monkeypatch.setattr(execution, "_same_process", lambda _state: False)
+    monkeypatch.setattr(execution, "_boot_id", lambda: "same-host")
+    monkeypatch.setattr(execution, "_group_absent", lambda _pid: False)
+    result = execution.issue_reconcile(root, 1)
+    assert result["recovery"] == "BLOCKED_PROCESS_GROUP_UNVERIFIED"
+    assert execution.issue_status(root, 1)["status"] == "RUNNING"
+
+
+def test_reconcile_absent_group_to_interrupted_enables_explicit_resume(controlled_issue, monkeypatch):
+    root, wt, preflight = controlled_issue
+    session_id = "12345678-1234-4123-8123-123456789abc"
+    with execution._guard(root, 1) as path:
+        execution._save(path, {
+            "run_id": "orphan", "status": "RUNNING", "pid": 8123,
+            "pid_start": "111", "boot_id": "same-host", "session_id": session_id,
+            "issue": 1, "repo": preflight.repository, "pr": preflight.pr_number,
+            "head": preflight.head_sha, "worktree": str(wt),
+        })
+    monkeypatch.setattr(execution, "_same_process", lambda _state: False)
+    monkeypatch.setattr(execution, "_boot_id", lambda: "same-host")
+    monkeypatch.setattr(execution, "_group_absent", lambda _pid: True)
+    result = execution.issue_reconcile(root, 1)
+    assert result["status"] == "INTERRUPTED"
+    assert result["recovery"] == "INTERRUPTED_CONFIRMED"
+    assert result["exit_code"] is None
+    plan = execution.issue_run(root, 1, resume=True)
+    assert plan["verdict"] == "RESUME_DRY_RUN"
+    assert plan["session_id"] == session_id
+
+
+def test_starting_state_without_pid_cannot_be_reconciled(controlled_issue, monkeypatch):
+    root, _, _ = controlled_issue
+    with execution._guard(root, 1) as path:
+        execution._save(path, {"run_id": "starting", "status": "STARTING", "pid": None})
+    monkeypatch.setattr(execution, "_same_process", lambda _state: False)
+    state = execution.issue_reconcile(root, 1)
+    assert state["recovery"] == "BLOCKED_STARTING_PID_UNKNOWN"
+    assert state["status"] == "STARTING"
+
+
+def test_reboot_recovers_old_pid_identity_only(controlled_issue, monkeypatch):
+    root, _, _ = controlled_issue
+    with execution._guard(root, 1) as path:
+        execution._save(path, {
+            "run_id": "old", "status": "RUNNING", "pid": 8123,
+            "pid_start": "111", "boot_id": "previous-host",
+        })
+    monkeypatch.setattr(execution, "_same_process", lambda _state: False)
+    monkeypatch.setattr(execution, "_boot_id", lambda: "current-host")
+    result = execution.issue_reconcile(root, 1)
+    assert result["status"] == "INTERRUPTED"
+    assert "reboot confirmed" in result["reason"]
+
+
+def test_bounded_append_with_oversized_chunk_never_exceeds_limit():
+    stream = io.BytesIO()
+    execution._bounded_append(stream, b"a" * execution._MAX_LOG_BYTES)
+    execution._bounded_append(stream, b"b" * (execution._MAX_LOG_BYTES + 65536))
+    assert len(stream.getvalue()) == execution._MAX_LOG_BYTES
+    assert stream.getvalue() == b"b" * execution._MAX_LOG_BYTES
+
+
+@pytest.mark.skipif(not Path("/proc/self/stat").is_file(), reason="Linux /proc required")
+def test_real_fake_copilot_process_and_same_session_resume(controlled_issue, monkeypatch, tmp_path):
+    root, wt, preflight = controlled_issue
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    fake = bindir / "copilot"
+    fake.write_text(
+        "#!" + sys.executable + "\\n"
+        "import json,sys\\n"
+        "print(json.dumps(sys.argv[1:]), flush=True)\\n",
+        encoding="utf-8",
+    )
+    fake.chmod(0o700)
+    monkeypatch.setenv("PATH", str(bindir) + os.pathsep + os.environ["PATH"])
+    from task_harness import issue_preflight
+    monkeypatch.setattr(
+        issue_preflight, "_remote_head",
+        lambda _root, branch: preflight.main_sha if branch == "main" else preflight.head_sha,
+    )
+    def fake_git(cwd, *cmd):
+        assert cwd == wt
+        if cmd == ("git", "rev-parse", "HEAD"):
+            return preflight.head_sha
+        if cmd == ("git", "status", "--porcelain"):
+            return ""
+        raise AssertionError(cmd)
+    monkeypatch.setattr(issue_preflight, "_run", fake_git)
+
+    first = execution.issue_run(root, 1, execute=True)
+    assert first["status"] == "SESSION_EXITED"
+    assert first["attempt"] == 1
+    session = first["session_id"]
+    logged_args = __import__("json").loads(Path(first["log"]).read_text())
+    assert f"--session-id={session}" in logged_args
+
+    second = execution.issue_run(root, 1, execute=True, resume=True)
+    assert second["status"] == "SESSION_EXITED"
+    assert second["attempt"] == 2
+    assert second["previous_run_id"] == first["run_id"]
+    assert second["session_id"] == session
+    assert second["run_id"] != first["run_id"]
+    args = __import__("json").loads(Path(second["log"]).read_text())
+    assert f"--session-id={session}" in args
+    assert Path(first["log"]).exists()  # Previous run transcript preserved.
