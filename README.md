@@ -96,6 +96,52 @@ task-harness issue-status --root . --issue 1
 task-harness issue-cancel --root . --issue 1
 ```
 
+## Explicit session resume and recovery
+
+After an Issue-scoped session exits, the ledger retains a **Copilot
+session UUID** and an immutable per-attempt run log. New `issue-run --execute`
+is blocked when any prior run record exists; continuing that Issue requires
+an explicit `issue-resume` command, using the **same** `--session-id` rather
+than `--continue` (which could select another repository's session).
+
+```bash
+# Read-only resume plan; never starts or charges Copilot:
+task-harness issue-resume --root . --issue 1 --repo tiroq/agent-harness \
+  --expected-head <existing-open-PR-head>
+
+# Observe possible orphaned/stale process ownership:
+task-harness issue-status --root . --issue 1
+
+# Explicitly reconcile an interrupted run after verifying its process group:
+task-harness issue-reconcile --root . --issue 1
+
+# Only when recovery reports INTERRUPTED_CONFIRMED, or the old attempt is
+# SESSION_EXITED / FAILED_SESSION / CANCELLED, and the fresh dry-run passes:
+task-harness issue-resume --root . --issue 1 --repo tiroq/agent-harness \
+  --expected-head <existing-open-PR-head> --execute
+```
+
+Reconciliation is **fail-closed**: if a process with the original
+PID/starttime is alive, its group may still exist, or the recorded PID/group
+cannot be verified, no automatic retry is performed. A confirmed host
+reboot or absence of the recorded process group transitions a stranded
+RUNNING/CANCEL_REQUESTED record to `INTERRUPTED`; `STARTING` without a
+recorded child PID remains blocked for manual review, because a child
+could have started before the launcher crashed. This also refuses old
+run records without a known session UUID; it never guesses a session.
+
+Resume accepts uncommitted changes left in the **same** worktree but still
+requires exactly the previously recorded repo, Issue, PR, remote branch
+HEAD, local HEAD, and current integration boundary. A prior local commit
+that moves HEAD away from the open PR branch remains blocked pending
+explicit reconciliation/publication. Session exit alone still does not
+satisfy independent review or PR-readiness gates.
+
+The implementation uses Copilot CLI's `--session-id=<UUID>` flag. Verify
+that the installed Copilot CLI version supports this option *before a
+paid `--execute` run*. No real paid-session recovery has yet been
+dogfooded; hermetic fake-Copilot process tests are the first gate.
+
 The new backend calls the existing live GitHub Issue preflight and **shares the
 same Copilot tool deny-list** used by portable task-package sessions. It
 creates a private run directory with the authoritative Issue/comments prompt
