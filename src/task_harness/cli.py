@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from task_harness.issue_preflight import IssuePreflightError, inspect_issue
+from task_harness.core.copilot_cli import copilot_arguments
 
 STATUSES = {"pending", "in_progress", "partial", "done", "blocked", "failed", "obsolete", "archived"}
 
@@ -74,24 +75,6 @@ def _prompt(root: Path, source: str, run_id: str, model: str) -> str:
     template = _template_root() / "deliver-task.prompt.md"
     body = template.read_text(encoding="utf-8") if template.exists() else "Run the task through the full delivery lifecycle."
     return f"{body}\n\nREPO_ROOT: {root}\nRUN_ID: {run_id}\nARTIFACT_ROOT: .copilot-workflow/runs/{run_id}\nSOURCE: {source}\nMODEL: {model}\n"
-
-
-def copilot_arguments(*, model: str, allow_all: bool) -> list[str]:
-    """Shared Copilot CLI policy for package and GitHub Issue entrypoints."""
-    args = [
-        "copilot", "--agent=task-harness-orchestrator", "--model", model,
-        "--autopilot",
-        f"--max-autopilot-continues={os.getenv('COPILOT_MAX_AUTOPILOT_CONTINUES', '100')}",
-    ]
-    if allow_all:
-        args.append("--allow-all-tools")
-    for denied in (
-        "git push", "git merge", "git rebase", "git reset", "git clean",
-        "git checkout", "git switch", "rm -rf", "sudo", "su", "chown",
-        "chmod -R", "pip install", "uv pip install", "npm install",
-    ):
-        args.append(f"--deny-tool=shell({denied})")
-    return args
 
 
 def run_task(root: Path, source: str, model: str, dry_run: bool, allow_all: bool) -> int:
@@ -246,6 +229,8 @@ def main(argv: list[str] | None = None) -> int:
             if status.get("status") == "CANCELLED":
                 return 130
             return 0 if status.get("status") == "SESSION_EXITED" else 1
+        if args.command == "issue-run" and status.get("verdict") == "BLOCKED_ACTIVE_RUN":
+            return 4
         return 0
     if args.command == "issue-preflight":
         if args.issue is None:
