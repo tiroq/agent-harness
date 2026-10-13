@@ -14,6 +14,7 @@ import secrets
 import shutil
 import signal
 import subprocess
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -24,6 +25,7 @@ from .issue_preflight import IssuePreflightError, IssuePreflightResult, inspect_
 
 _MAX_LOG_BYTES = 2 * 1024 * 1024
 _ACTIVE = frozenset({"STARTING", "RUNNING", "CANCEL_REQUESTED"})
+_RESUMABLE = frozenset({"SESSION_EXITED", "FAILED_SESSION", "CANCELLED", "INTERRUPTED"})
 
 
 class IssueExecutionError(RuntimeError):
@@ -64,7 +66,7 @@ def _load(path: Path) -> dict[str, Any] | None:
 
 
 def _save(path: Path, state: dict[str, Any]) -> None:
-    temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
+    temporary = path.with_name(path.name + f".{os.getpid()}.{secrets.token_hex(4)}.tmp")
     fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -108,15 +110,36 @@ def _active_state(state: dict[str, Any] | None) -> bool:
     return bool(state and state.get("status") in _ACTIVE)
 
 
+def _valid_session_id(value: object) -> bool:
+    try:
+        return isinstance(value, str) and str(uuid.UUID(value)) == value
+    except (ValueError, AttributeError, TypeError):
+        return False
+
+
+def _matching_previous(state: dict[str, Any], preflight: IssuePreflightResult) -> bool:
+    return (
+        state.get("issue") == preflight.issue_number
+        and state.get("repo") == preflight.repository
+        and state.get("pr") == preflight.pr_number
+        and state.get("head") == preflight.head_sha
+        and state.get("worktree") == str(preflight.worktree)
+    )
+
+
 def _bounded_append(log: Any, block: bytes) -> None:
+    """Keep the newest bytes within the cap even for oversized write bursts."""
     log.seek(0, os.SEEK_END)
-    if log.tell() + len(block) > _MAX_LOG_BYTES:
+    remaining = log.tell()
+    if remaining + len(block) <= _MAX_LOG_BYTES:
+        log.write(block)
+    else:
+        keep = max(0, _MAX_LOG_BYTES - len(block))
+        log.seek(max(0, remaining - keep))
+        tail = log.read() if keep else b""
         log.seek(0)
-        prior = log.read()[-(_MAX_LOG_BYTES // 2):]
-        log.seek(0)
-        log.write(prior)
+        log.write((tail + block)[-_MAX_LOG_BYTES:])
         log.truncate()
-    log.write(block[-_MAX_LOG_BYTES:])
     log.flush()
 
 
@@ -145,9 +168,13 @@ def issue_run(
     expected_head: str | None = None,
     model: str = "gpt-5.3-codex",
     execute: bool = False,
+    resume: bool = False,
 ) -> dict[str, Any]:
-    """Dry-run by default; explicit execution owns one foreground subprocess."""
-    preflight = inspect_issue(root, issue, expected_repo=repo, expected_head=expected_head)
+    """Explicit repo-owned execution; a resumed session retains its exact ID."""
+    preflight = inspect_issue(
+        root, issue, expected_repo=repo, expected_head=expected_head,
+        allow_dirty=True if resume else False,
+    )
     plan: dict[str, Any] = {
         "issue": issue,
         "repo": preflight.repository,
@@ -157,14 +184,23 @@ def issue_run(
         "model": model,
     }
     if not execute:
-        # Dry-run must remain read-only; even creating a lock would violate
-        # its contract and could make a formerly clean repository dirty.
+        # Dry-run never acquires a write lock or creates artifacts.
         previous = _load(_paths(root, issue)[0])
         if _active_state(previous):
             plan["verdict"] = "BLOCKED_ACTIVE_RUN"
             plan["active_run_id"] = previous["run_id"]
+        elif resume:
+            if previous is None or previous.get("status") not in _RESUMABLE:
+                plan["verdict"] = "BLOCKED_NOT_RESUMABLE"
+            elif not _valid_session_id(previous.get("session_id")):
+                plan["verdict"] = "BLOCKED_SESSION_ID_UNKNOWN"
+            elif not _matching_previous(previous, preflight):
+                plan["verdict"] = "BLOCKED_RUN_IDENTITY_MISMATCH"
+            else:
+                plan["verdict"] = "RESUME_DRY_RUN"
+                plan["session_id"] = previous["session_id"]
         else:
-            plan["verdict"] = "DRY_RUN"
+            plan["verdict"] = "BLOCKED_REQUIRES_RESUME" if previous else "DRY_RUN"
         return plan
 
     orchestrator = preflight.worktree / ".github" / "agents" / "task-harness-orchestrator.agent.md"
@@ -183,12 +219,26 @@ def issue_run(
     run_id = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + secrets.token_hex(5)
     artifacts = root.resolve() / ".copilot-workflow" / "runs" / run_id
     prompt = _prompt(preflight)
-    args = copilot_arguments(model=model, allow_all=True)
     process: subprocess.Popen[bytes] | None = None
     with _guard(root, issue) as path:
         previous = _load(path)
         if _active_state(previous):
             raise IssueExecutionError(f"another run owns Issue #{issue}: {previous['run_id']}")
+        if resume:
+            if previous is None or previous.get("status") not in _RESUMABLE:
+                raise IssueExecutionError("previous run is not terminal/resumable; reconcile first")
+            if not _matching_previous(previous, preflight):
+                raise IssueExecutionError("previous run Issue/repository/worktree/head/PR mismatch")
+            if not _valid_session_id(previous.get("session_id")):
+                raise IssueExecutionError("previous Copilot session ID is missing or invalid")
+            if previous.get("model") and previous["model"] != model:
+                raise IssueExecutionError("resume model differs from recorded session model")
+            session_id = previous["session_id"]
+        else:
+            if previous is not None:
+                raise IssueExecutionError("previous run exists; explicit issue-resume required")
+            session_id = str(uuid.uuid4())
+        args = copilot_arguments(model=model, allow_all=True) + [f"--session-id={session_id}"]
         # Repeat the time-sensitive remote ownership check right before launch.
         try:
             from .issue_preflight import _remote_head
@@ -201,7 +251,7 @@ def issue_run(
             from .issue_preflight import _run as git_query
             if git_query(preflight.worktree, "git", "rev-parse", "HEAD") != preflight.head_sha:
                 raise IssueExecutionError("local Issue HEAD changed after preflight")
-            if git_query(preflight.worktree, "git", "status", "--porcelain"):
+            if (not resume) and git_query(preflight.worktree, "git", "status", "--porcelain"):
                 raise IssueExecutionError("Issue worktree became dirty after preflight")
         except IssuePreflightError as exc:
             raise IssueExecutionError(f"remote prelaunch check failed: {exc}") from exc
@@ -213,6 +263,10 @@ def issue_run(
         log_path = artifacts / "copilot.log"
         state: dict[str, Any] = {
             "run_id": run_id,
+            "session_id": session_id,
+            "model": model,
+            "attempt": 1 if not previous else int(previous.get("attempt", 1)) + 1,
+            "previous_run_id": None if not previous else previous["run_id"],
             "status": "STARTING",
             "phase": DeliveryPhase.IMPLEMENTING.value,
             "issue": issue,
