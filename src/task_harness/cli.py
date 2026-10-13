@@ -206,6 +206,11 @@ def main(argv: list[str] | None = None) -> int:
             issue_run,
             issue_status,
         )
+        if args.command == "issue-run":
+            if args.execute and args.dry_run:
+                parser.error("--execute and --dry-run are mutually exclusive")
+            if args.execute and (not args.repo or not args.expected_head):
+                parser.error("issue-run --execute requires --repo and --expected-head")
         try:
             if args.command == "issue-run":
                 status = issue_run(
