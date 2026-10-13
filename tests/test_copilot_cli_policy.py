@@ -30,6 +30,11 @@ def test_copilot_policy_shared_for_issue_and_package_sessions(monkeypatch):
     "argv",
     [
         ["issue-run", "--issue", "1", "--execute"],
+        ["issue-resume", "--issue", "1", "--execute"],
+        ["issue-resume", "--issue", "1", "--execute", "--repo", "tiroq/agent-harness"],
+        ["issue-resume", "--issue", "1", "--execute", "--expected-head", "a" * 40],
+        ["issue-resume", "--issue", "1", "--execute", "--dry-run",
+         "--repo", "tiroq/agent-harness", "--expected-head", "a" * 40],
         ["issue-run", "--issue", "1", "--execute", "--repo", "tiroq/agent-harness"],
         ["issue-run", "--issue", "1", "--execute", "--expected-head", "a" * 40],
         ["issue-run", "--issue", "1", "--execute", "--dry-run",
