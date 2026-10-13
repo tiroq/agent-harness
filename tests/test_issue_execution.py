@@ -325,8 +325,9 @@ def test_real_fake_copilot_process_and_same_session_resume(controlled_issue, mon
     fake = bindir / "copilot"
     fake.write_text(
         "#!" + sys.executable + "\n"
-        "import json,sys\n"
-        "print(json.dumps(sys.argv[1:]), flush=True)\n",
+        "import json,sys,time\n"
+        "print(json.dumps(sys.argv[1:]), flush=True)\n"
+        "time.sleep(0.4)\n",
         encoding="utf-8",
     )
     fake.chmod(0o700)
