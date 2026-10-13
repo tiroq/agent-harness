@@ -358,6 +358,57 @@ def issue_status(root: Path, issue: int) -> dict[str, Any]:
     return current
 
 
+def _group_absent(pid: int) -> bool:
+    """A vanished process *group* is required, not just a vanished leader."""
+    if pid <= 1:
+        return False
+    try:
+        os.killpg(pid, 0)
+        return False
+    except ProcessLookupError:
+        return True
+    except PermissionError:
+        return False
+
+
+def issue_reconcile(root: Path, issue: int) -> dict[str, Any]:
+    """Classify a stranded parent without killing or relaunching a session.
+
+    A running original PID, a still-existing process group, an unverifiable
+    STARTING state, or a possibly reused PID MUST remain blocked. Explicit
+    resume is available only after proving the prior group is gone.
+    """
+    with _guard(root, issue) as path:
+        current = _load(path)
+        if current is None:
+            return {"issue": issue, "status": "NOT_STARTED"}
+        if not _active_state(current):
+            return dict(current, recovery="NOT_NEEDED")
+        if _same_process(current):
+            return dict(current, recovery="PROCESS_STILL_RUNNING")
+        if current.get("status") == "STARTING":
+            return dict(current, recovery="BLOCKED_STARTING_PID_UNKNOWN")
+        pid = current.get("pid")
+        boot_id = current.get("boot_id")
+        if not isinstance(pid, int) or pid <= 1 or not boot_id:
+            return dict(current, recovery="BLOCKED_PROCESS_IDENTITY_UNKNOWN")
+        current_boot = _boot_id()
+        if not current_boot:
+            return dict(current, recovery="BLOCKED_HOST_BOOT_UNKNOWN")
+        if boot_id != current_boot:
+            reason = "host reboot confirmed; original process group cannot survive"
+        elif _group_absent(pid):
+            reason = "recorded process group is absent"
+        else:
+            return dict(current, recovery="BLOCKED_PROCESS_GROUP_UNVERIFIED")
+        current.update(
+            status="INTERRUPTED", exit_code=None,
+            interrupted_at=_clock(), reason=reason, updated_at=_clock(),
+        )
+        _save(path, current)
+        return dict(current, recovery="INTERRUPTED_CONFIRMED")
+
+
 def issue_cancel(root: Path, issue: int) -> dict[str, Any]:
     """Request cancellation; refuse to signal a reused or unverifiable PID."""
     with _guard(root, issue) as path:
