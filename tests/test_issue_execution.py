@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-import json
 from pathlib import Path
 
 import pytest
@@ -71,7 +70,11 @@ def test_duplicate_active_run_is_rejected(controlled_issue, monkeypatch):
     monkeypatch.setattr(execution.shutil, "which", lambda _: "/bin/copilot")
     monkeypatch.setattr(execution, "_boot_id", lambda: "boot")
     monkeypatch.setattr(execution, "_proc_start", lambda _pid: "start")
-    monkeypatch.setattr(execution.Path, "is_file", lambda self: True if str(self) == "/proc/self/stat" else Path.is_file(self))
+    original_is_file = Path.is_file
+    monkeypatch.setattr(
+        Path, "is_file",
+        lambda self: True if str(self) == "/proc/self/stat" else original_is_file(self),
+    )
     with pytest.raises(execution.IssueExecutionError, match="another run owns"):
         execution.issue_run(root, 1, execute=True)
     assert execution.issue_run(root, 1)["verdict"] == "BLOCKED_ACTIVE_RUN"
