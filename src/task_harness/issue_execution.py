@@ -143,10 +143,18 @@ def _bounded_append(log: Any, block: bytes) -> None:
     log.flush()
 
 
-def _prompt(result: IssuePreflightResult) -> str:
+def _prompt(result: IssuePreflightResult, *, resume: bool = False) -> str:
     # The Issue/comments packet is authoritative input, not executable code.
+    recovery = (
+        "RESUME AN EXISTING COPILOT SESSION. Inspect prior worktree changes, "
+        "the current Issue and latest amendments. Do not restart the work "
+        "from scratch or duplicate commits. Treat prior session completion "
+        "as unverified until independent evidence is rechecked.\n"
+        if resume else ""
+    )
     return (
-        "You are implementing an existing GitHub Issue in its OWN repository.\n"
+        recovery
+        + "You are implementing an existing GitHub Issue in its OWN repository.\n"
         "Use the existing repository agent roles and full independent review "
         "and evidence gates. NEVER publish, push, merge, or mark the Issue done "
         "without separately proven exact-head authorization and checks.\n"
@@ -196,6 +204,8 @@ def issue_run(
                 plan["verdict"] = "BLOCKED_SESSION_ID_UNKNOWN"
             elif not _matching_previous(previous, preflight):
                 plan["verdict"] = "BLOCKED_RUN_IDENTITY_MISMATCH"
+            elif previous.get("model") and previous["model"] != model:
+                plan["verdict"] = "BLOCKED_MODEL_MISMATCH"
             else:
                 plan["verdict"] = "RESUME_DRY_RUN"
                 plan["session_id"] = previous["session_id"]
@@ -218,7 +228,7 @@ def issue_run(
     # Reuse the same invocation contract as the portable task runner.
     run_id = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + secrets.token_hex(5)
     artifacts = root.resolve() / ".copilot-workflow" / "runs" / run_id
-    prompt = _prompt(preflight)
+    prompt = _prompt(preflight, resume=resume)
     process: subprocess.Popen[bytes] | None = None
     with _guard(root, issue) as path:
         previous = _load(path)
