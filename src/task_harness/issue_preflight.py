@@ -170,9 +170,17 @@ def inspect_issue(
     if owned.classify_ownership() is not WorktreeOwnership.OWNED:
         raise IssuePreflightError("Issue worktree/branch ownership mismatch")
     registered = _run(root, "git", "worktree", "list", "--porcelain")
-    if f"worktree {worktree}\n" not in registered + "\n" or (
-        f"branch refs/heads/{branch}" not in registered
-    ):
+    ownership_rows = [
+        block.splitlines()
+        for block in registered.split("\n\n")
+        if block.strip()
+    ]
+    matching = [
+        rows for rows in ownership_rows
+        if f"worktree {worktree}" in rows
+        and f"branch refs/heads/{branch}" in rows
+    ]
+    if len(matching) != 1:
         raise IssuePreflightError("Issue worktree is not registered on expected branch")
     if _run(worktree, "git", "status", "--porcelain"):
         raise IssuePreflightError("Issue worktree has uncommitted changes")
