@@ -76,6 +76,44 @@ MCP backend or publication/readiness state machine described by Issue #1.
 Those remain future phases; a passing preflight must not be taken as
 authorization to bypass exact-head review/CI or as proof of migration parity.
 
+## GitHub Issue session execution (bounded Phase B)
+
+A successful `issue-preflight` can now be followed by a **manually
+authorized** Issue Copilot session in the existing repository worktree.
+The defaults are deliberately safe and do not start Copilot:
+
+```bash
+# From the agent-harness main checkout; existing Issue 1 worktree/PR 2 only:
+task-harness issue-run --root . --issue 1 --repo tiroq/agent-harness \
+  --expected-head <current-40-character-PR-head>
+
+# Explicit human launch (foreground; this actually spends Copilot requests):
+task-harness issue-run --root . --issue 1 --repo tiroq/agent-harness \
+  --expected-head <current-40-character-PR-head> --execute
+
+# While running, from a second terminal:
+task-harness issue-status --root . --issue 1
+task-harness issue-cancel --root . --issue 1
+```
+
+The new backend calls the existing live GitHub Issue preflight and **shares the
+same Copilot tool deny-list** used by portable task-package sessions. It
+creates a private run directory with the authoritative Issue/comments prompt
+and a bounded (~2 MiB) transcript, plus a per-repo, per-Issue locked status
+ledger. Concurrent launches of the same Issue are rejected even when the
+previous owner's PID is missing/uncertain. Cancellation only signals a child
+whose Linux PID start time and boot ID match the recorded identity; it does
+not kill an unverified or reused process.
+
+`SESSION_EXITED` only means the Copilot process returned exit code 0.
+It is **not** PR-ready, approval, verified commit, or Issue completion.
+Live GitHub checks, independent role provenance/review/audit, session resume,
+typed end-to-end delivery phases, artifact publication and MCP/controller
+parity remain unimplemented. If the launching parent is killed before it
+records exit status, the state remains conservatively active/unknown; it
+must not be automatically restarted or marked successful. This bounded
+session executor is Linux-only for safe cancellation (`/proc` identity).
+
 ## Tool permissions
 
 Default runner mode enables broad Copilot tools but denies destructive/history-changing commands, pushes, privilege escalation, recursive chmod, and ad-hoc dependency installation. Use `--narrow-tools` for a project with stricter policy. The deny-list is a safety boundary, not a replacement for code review.
