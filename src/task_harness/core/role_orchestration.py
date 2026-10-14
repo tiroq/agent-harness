@@ -27,6 +27,7 @@ class GitObservation:
     diff_sha: str
     changed_paths: tuple[str, ...] = ()
     parent_sha: str | None = None
+    commit_paths: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,7 +84,7 @@ def run_one_role(
         diff_before=before.diff_sha,
         diff_after=after.diff_sha,
         approved_paths=reply.approved_paths,
-        committed_paths=after.changed_paths if ticket.phase is PipelinePhase.COMMIT else (),
+        committed_paths=after.commit_paths if ticket.phase is PipelinePhase.COMMIT else (),
         commit_parent_sha=after.parent_sha if ticket.phase is PipelinePhase.COMMIT else None,
         quality=quality,
     )
