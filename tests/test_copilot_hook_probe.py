@@ -75,7 +75,8 @@ def test_probe_fake_cli_emits_two_events_in_isolated_repository(tmp_path):
     fake.chmod(0o700)
     env = {**os.environ, "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"]}
     result = subprocess.run(
-        [sys.executable, str(PROBE), "--live", "--timeout-sec", "15"],
+        [sys.executable, str(PROBE), "--live", "--billing-mode", "ai_credits",
+         "--timeout-sec", "15"],
         cwd=tmp_path, env=env, capture_output=True, text=True,
         timeout=20, check=False,
     )
@@ -131,3 +132,59 @@ def test_live_cli_uses_supported_soft_credit_limit_and_bounded_toolset():
     assert '"--deny-tool=shell"' in source
     assert '"--deny-tool=write"' in source
     assert '"--disable-builtin-mcps"' in source
+
+
+
+def test_live_probe_requires_explicit_billing_mode_before_cli_invocation(tmp_path):
+    # A fake executable is present, but --live without a billing mode must
+    # fail during argparse before calling it or spending any premium request.
+    fake = tmp_path / "copilot"
+    sentinel = tmp_path / "was-executed"
+    fake.write_text(
+        "#!/bin/sh\n"
+        f"touch {sentinel}\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake.chmod(0o700)
+    result = subprocess.run(
+        [sys.executable, str(PROBE), "--live"],
+        env={**os.environ, "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"]},
+        capture_output=True, text=True, check=False, timeout=20,
+    )
+    assert result.returncode == 2
+    assert "--billing-mode" in result.stderr
+    assert not sentinel.exists()
+
+
+def test_probe_legacy_mode_never_applies_ai_credit_flag(tmp_path):
+    fake = tmp_path / "copilot"
+    args_path = tmp_path / "args.json"
+    fake.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os, sys, subprocess\n"
+        "from pathlib import Path\n"
+        f"Path({str(args_path)!r}).write_text(json.dumps(sys.argv[1:]))\n"
+        "common={'sessionId':'simulated-parent','cwd':os.getcwd(),"
+        "'agentName':'hook-probe-worker'}\n"
+        "for kind in ('subagentStart','subagentStop'):\n"
+        "    event=dict(common)\n"
+        "    if kind=='subagentStop':\n"
+        "        event.update(agentId='simulated-worker-123',"
+        "stopReason='end_turn')\n"
+        "    subprocess.run(['python3','.github/hooks/probe-handler.py',kind],"
+        "input=json.dumps(event),text=True,check=True,"
+        "stdout=subprocess.DEVNULL)\n",
+        encoding="utf-8",
+    )
+    fake.chmod(0o700)
+    result = subprocess.run(
+        [sys.executable, str(PROBE), "--live", "--billing-mode",
+         "legacy_premium_requests", "--timeout-sec", "15"],
+        env={**os.environ, "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"]},
+        capture_output=True, text=True, check=False, timeout=20,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["verdict"] == "PASS"
+    argv = json.loads(args_path.read_text())
+    assert not any(s.startswith("--max-ai-credits") for s in argv)
