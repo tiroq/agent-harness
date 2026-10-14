@@ -61,11 +61,11 @@ def quality_check(
         state = _checkpoint_state(info)
         if state.phase != PipelinePhase.PRE_COMMIT_AUDIT or state.pending is not None:
             raise IssueExecutionError("quality gate only valid between independent test and pre-audit")
+        worktree = Path(ledger["worktree"]).resolve()
+        _script_is_authoritative(worktree)
         observation = _git(ledger, root, issue)
         if observation.head_sha != state.current_head_sha or observation.diff_sha != state.revision_diff_sha:
             raise IssueExecutionError("quality gate baseline changed")
-        worktree = Path(ledger["worktree"]).resolve()
-        _script_is_authoritative(worktree)
         if info.get("quality_pending") is not None:
             raise IssueExecutionError("quality gate already running or orphaned")
         info["quality_pending"] = nonce
