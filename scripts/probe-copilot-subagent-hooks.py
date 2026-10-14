@@ -223,7 +223,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         # Keep this early, flushed message even if the CLI or terminal dies.
         print("LIVE_PROBE_START: running isolated Copilot subprocess; logs are private",
-              flush=True)
+              file=sys.stderr, flush=True)
         exit_code, timed_out = run_copilot(tmp, model=args.model, timeout_sec=args.timeout_sec)
         event_file = tmp / ".github" / "hooks" / "probe-events.jsonl"
         events = []
