@@ -10,6 +10,14 @@ from .config import (
     RuntimeRequest,
     resolve_runtime_config,
 )
+from .delivery_pipeline import (
+    PipelineError, PipelinePhase, PipelineState, PipelineVerdict,
+    RoleEvidence, RoleTicket,
+)
+from .role_orchestration import (
+    GitEvidence, GitObservation, LocalGitEvidence, QualityProvider,
+    RoleReply, RoleTransport, drive_pipeline, run_one_role,
+)
 from .environment import NormalizedEnvironment, normalize_environment
 from .gates import decide_pre_audit_gate
 from .identity import (
@@ -48,6 +56,20 @@ from .refresh import RefreshEvidence, RefreshVerdict, parse_refresh_evidence
 from .usage import RoleUsageTracker
 
 __all__ = [
+    "run_one_role",
+    "drive_pipeline",
+    "RoleTransport",
+    "RoleReply",
+    "QualityProvider",
+    "LocalGitEvidence",
+    "GitObservation",
+    "GitEvidence",
+    "RoleTicket",
+    "RoleEvidence",
+    "PipelineVerdict",
+    "PipelineState",
+    "PipelinePhase",
+    "PipelineError",
     "BLOCKED_OUTCOME_STATES",
     "DeliveryPhase",
     "FAILURE_OUTCOME_STATES",
