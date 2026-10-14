@@ -9,12 +9,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Mapping
 
 from .gates import decide_pre_audit_gate
 from .intake import intake_role_report
 from .models import (
-    DeliveryOutcome, DeliveryRole, PrerequisiteCheck, PrerequisiteStatus, RoleReport,
+    DeliveryRole, PrerequisiteCheck, PrerequisiteStatus, RoleReport,
 )
 
 
@@ -275,7 +274,7 @@ class PipelineState:
 
 def _safe_repo_path(path: str) -> bool:
     from pathlib import PurePosixPath
-    if not path or path.startswith("/") or "\\\\" in path:
+    if not path or path.startswith("/") or chr(92) in path:
         return False
     parts = PurePosixPath(path).parts
     return bool(parts) and all(p not in {"..", "."} for p in parts)
