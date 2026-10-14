@@ -181,11 +181,15 @@ def queue_tasks(root: Path, tasks_dir: str, model: str, limit: int | None, selec
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="task-harness")
-    parser.add_argument("command", choices=("init", "list", "run", "queue", "issue-preflight", "issue-run", "issue-resume", "issue-status", "issue-reconcile", "issue-cancel"))
+    parser.add_argument("command", choices=("init", "list", "run", "queue", "issue-preflight", "issue-run", "issue-resume", "issue-status", "issue-reconcile", "issue-cancel", "issue-role-begin", "issue-role-complete", "issue-role-status"))
     parser.add_argument("--root", default=".")
     parser.add_argument("--issue", type=int, help="GitHub Issue number for issue-preflight")
     parser.add_argument("--expected-head", help="Expected 40-character PR head SHA")
     parser.add_argument("--execute", action="store_true", help="Explicitly launch a Copilot Issue session")
+    parser.add_argument("--run-id", help="Existing parent Issue run ID")
+    parser.add_argument("--parent-session-id", help="Parent Copilot session UUID")
+    parser.add_argument("--subagent-id", help="Copilot task/read_agent returned internal subagent ID")
+    parser.add_argument("--report", help="Report filename stored in owning run artifacts")
     parser.add_argument("--repo", help="Expected GitHub owner/name for origin verification")
     parser.add_argument("--tasks-dir", default=".scratch")
     parser.add_argument("--source", default="")
@@ -197,6 +201,40 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--select", action="store_true")
     args = parser.parse_args(argv)
     root = Path(args.root).resolve()
+    if args.command in {"issue-role-begin", "issue-role-complete", "issue-role-status"}:
+        if args.issue is None:
+            parser.error(f"{args.command} requires --issue")
+        from task_harness.issue_execution import IssueExecutionError
+        from task_harness.issue_role_checkpoints import (
+            role_begin, role_complete, role_status,
+        )
+        try:
+            if args.command == "issue-role-status":
+                status = role_status(root, args.issue)
+            else:
+                if not args.run_id or not args.parent_session_id:
+                    parser.error(f"{args.command} requires --run-id and --parent-session-id")
+                if args.command == "issue-role-begin":
+                    if not args.subagent_id:
+                        parser.error("issue-role-begin requires --subagent-id")
+                    status = role_begin(
+                        root, args.issue, run_id=args.run_id,
+                        parent_session_id=args.parent_session_id,
+                        subagent_id=args.subagent_id,
+                    )
+                else:
+                    if not args.report:
+                        parser.error("issue-role-complete requires --report")
+                    status = role_complete(
+                        root, args.issue, run_id=args.run_id,
+                        parent_session_id=args.parent_session_id, report=args.report,
+                    )
+        except (IssueExecutionError, OSError, ValueError) as exc:
+            print(f"BLOCKED: {exc}", file=sys.stderr)
+            return 4
+        import json
+        print(json.dumps(status, indent=2, sort_keys=True, default=str))
+        return 0
     if args.command in {"issue-run", "issue-resume", "issue-status", "issue-reconcile", "issue-cancel"}:
         if args.issue is None:
             parser.error(f"{args.command} requires --issue")
