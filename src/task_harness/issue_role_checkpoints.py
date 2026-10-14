@@ -27,6 +27,7 @@ from .issue_execution import (
 
 _MAX_REPORT = 256 * 1024
 _SUBAGENT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{3,127}$")
+_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$")
 _KEYS = frozenset({"ROLE", "GENERATED_BY_ROLE", "AGENT_SESSION_ID", "VERDICT", "APPROVED_TASK_PATHS"})
 
 
@@ -87,6 +88,8 @@ def _observation_from_dict(data: dict[str, Any]) -> GitObservation:
 
 
 def _parent(ledger: dict[str, Any] | None, *, issue: int, run_id: str, session_id: str) -> dict[str, Any]:
+    if not _RUN_ID.fullmatch(run_id):
+        raise IssueExecutionError("invalid parent run ID")
     if (
         ledger is None
         or ledger.get("issue") != issue
@@ -110,7 +113,12 @@ def _git(ledger: dict[str, Any], root: Path, issue: int) -> GitObservation:
 def _read_report(root: Path, run_id: str, report: str) -> tuple[RoleReport, PipelineVerdict, tuple[str, ...], str]:
     if not report or "/" in report or chr(92) in report or report in {".", ".."} or not report.endswith(".md"):
         raise IssueExecutionError("report must be a simple .md filename")
-    base = (root.resolve() / ".copilot-workflow" / "runs" / run_id).resolve()
+    if not _RUN_ID.fullmatch(run_id):
+        raise IssueExecutionError("invalid parent run ID")
+    runs_root = (root.resolve() / ".copilot-workflow" / "runs").resolve()
+    base = (runs_root / run_id).resolve()
+    if base.parent != runs_root:
+        raise IssueExecutionError("role report run artifact path escapes repository")
     file = base / report
     if file.is_symlink() or not file.is_file() or file.resolve().parent != base:
         raise IssueExecutionError("report must be a regular file inside the owning run artifacts")
