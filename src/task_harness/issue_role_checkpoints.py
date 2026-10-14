@@ -70,6 +70,12 @@ def _restore(data: dict[str, Any]) -> PipelineState:
         raise IssueExecutionError("corrupt role checkpoint state; refusing phase mutation") from exc
 
 
+def _checkpoint_state(checkpoint: Any) -> PipelineState:
+    if not isinstance(checkpoint, dict) or not isinstance(checkpoint.get("pipeline"), dict):
+        raise IssueExecutionError("corrupt role checkpoint state; refusing phase mutation")
+    return _restore(checkpoint["pipeline"])
+
+
 def _observation_to_dict(observation: GitObservation) -> dict[str, Any]:
     return dataclasses.asdict(observation)
 
@@ -96,6 +102,10 @@ def _parent(ledger: dict[str, Any] | None, *, issue: int, run_id: str, session_i
         or ledger.get("run_id") != run_id
         or ledger.get("session_id") != session_id
         or ledger.get("status") != "RUNNING"
+        or not isinstance(ledger.get("worktree"), str)
+        or not isinstance(ledger.get("repo"), str)
+        or not isinstance(ledger.get("pr"), int)
+        or not isinstance(ledger.get("head"), str)
         or not _same_process(ledger)
     ):
         raise IssueExecutionError("parent run/session is not the live owning Copilot process")
@@ -170,7 +180,7 @@ def role_begin(root: Path, issue: int, *, run_id: str, parent_session_id: str, s
                 head_sha=observed.head_sha, diff_sha=observed.diff_sha,
             )
         else:
-            state = _restore(role_data["pipeline"])
+            state = _checkpoint_state(role_data)
             if (state.repository != ledger["repo"] or state.issue != issue
                     or state.pr != ledger["pr"]):
                 raise IssueExecutionError("role checkpoint identity mismatch")
@@ -208,7 +218,7 @@ def role_complete(
         role_data = ledger.get("role_checkpoint")
         if not isinstance(role_data, dict) or role_data.get("before") is None:
             raise IssueExecutionError("no pending internal-subagent checkpoint")
-        state = _restore(role_data["pipeline"])
+        state = _checkpoint_state(role_data)
         ticket = state.pending
         if ticket is None or ticket.run_id != run_id:
             raise IssueExecutionError("role ticket does not belong to parent run")
@@ -248,7 +258,7 @@ def role_status(root: Path, issue: int) -> dict[str, Any]:
     info = ledger.get("role_checkpoint")
     if info is None:
         return {"issue": issue, "status": "NO_ROLE_EVIDENCE", "pr_ready": False}
-    state = _restore(info["pipeline"])
+    state = _checkpoint_state(info)
     return {
         "issue": issue, "parent_run_id": ledger["run_id"],
         "parent_session_id": ledger["session_id"],
