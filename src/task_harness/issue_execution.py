@@ -327,6 +327,10 @@ def issue_run(
                         "HARNESS_RUN_ID": run_id,
                         "HARNESS_PARENT_SESSION_ID": session_id,
                         "ISSUE_NUMBER": str(issue),
+                        # Absolute harness source path is needed because
+                        # Copilot command hooks run from the Issue worktree.
+                        "PYTHONPATH": str(Path(__file__).resolve().parents[1])
+                        + os.pathsep + os.environ.get("PYTHONPATH", ""),
                     },
                 )
             start = _proc_start(process.pid)
