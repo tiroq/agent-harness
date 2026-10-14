@@ -208,3 +208,44 @@ def test_test_engineer_can_add_test_file_but_requires_new_review():
         (("src/a.py","aaa"),("tests/test_a.py","new")),
     )
     assert run_one_role(state,transport=role,git=git,run_id="test") is PipelinePhase.REVIEW
+
+def test_git_evidence_expands_nested_untracked_directories_to_file_paths(tmp_path: Path):
+    root = tmp_path / "repo"
+    root.mkdir()
+    _git(root, "init", "-q")
+    _git(root, "config", "user.email", "tests@example.invalid")
+    _git(root, "config", "user.name", "Test")
+    (root / "README.md").write_text("baseline\n")
+    _git(root, "add", "README.md")
+    _git(root, "commit", "-qm", "baseline")
+    nested = root / "tests" / "infrastructure"
+    nested.mkdir(parents=True)
+    (nested / "test_first.py").write_text("assert True\n")
+    (nested / "test_second.py").write_text("assert 1 == 1\n")
+    (root / "other").mkdir()
+    (root / "other" / "feature.txt").write_text("payload\n")
+    evidence = LocalGitEvidence(root).observe()
+    assert evidence.changed_paths == (
+        "other/feature.txt",
+        "tests/infrastructure/test_first.py",
+        "tests/infrastructure/test_second.py",
+    )
+    assert tuple(name for name, _ in evidence.path_fingerprints) == evidence.changed_paths
+    assert evidence.diff_sha
+    assert LocalGitEvidence(root).observe().diff_sha == evidence.diff_sha
+
+
+def test_git_evidence_rejects_untracked_symlink_inside_nested_directory(tmp_path: Path):
+    root = tmp_path / "repo"
+    root.mkdir()
+    _git(root, "init", "-q")
+    _git(root, "config", "user.email", "tests@example.invalid")
+    _git(root, "config", "user.name", "Test")
+    (root / "README.md").write_text("baseline\n")
+    _git(root, "add", "README.md")
+    _git(root, "commit", "-qm", "baseline")
+    nested = root / "tests" / "infrastructure"
+    nested.mkdir(parents=True)
+    (nested / "bad-link").symlink_to(root / "README.md")
+    with pytest.raises(PipelineError, match="untracked non-regular path"):
+        LocalGitEvidence(root).observe()
