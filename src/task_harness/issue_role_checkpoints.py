@@ -269,6 +269,10 @@ def role_complete(
         # evidence than text alone, but is not a secure remote attestation.
         from .issue_subagent_hooks import stopped_agent_id
         observed_agent_id = stopped_agent_id(role_data)
+        if ticket.phase in {PipelinePhase.PRE_COMMIT_AUDIT, PipelinePhase.POST_COMMIT_AUDIT} and observed_agent_id is None:
+            # Independent approval must not be granted solely by a fabricated
+            # report/session ID if the configured runtime hook never fired.
+            raise IssueExecutionError("auditor approval requires observed Copilot subagentStop hook")
         if observed_agent_id is not None and observed_agent_id != ticket.session_id:
             raise IssueExecutionError("Copilot subagentStop ID does not match role checkpoint")
         source = (
