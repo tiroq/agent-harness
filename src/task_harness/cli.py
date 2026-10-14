@@ -181,7 +181,7 @@ def queue_tasks(root: Path, tasks_dir: str, model: str, limit: int | None, selec
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="task-harness")
-    parser.add_argument("command", choices=("init", "list", "run", "queue", "issue-preflight", "issue-run", "issue-resume", "issue-status", "issue-reconcile", "issue-cancel", "issue-role-begin", "issue-role-complete", "issue-role-status", "issue-hook-event"))
+    parser.add_argument("command", choices=("init", "list", "run", "queue", "issue-preflight", "issue-run", "issue-resume", "issue-status", "issue-reconcile", "issue-cancel", "issue-role-begin", "issue-role-complete", "issue-role-status", "issue-hook-event", "issue-quality-check"))
     parser.add_argument("--root", default=".")
     parser.add_argument("--issue", type=int, help="GitHub Issue number for issue-preflight")
     parser.add_argument("--expected-head", help="Expected 40-character PR head SHA")
@@ -191,6 +191,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--subagent-id", help="Copilot task/read_agent returned internal subagent ID")
     parser.add_argument("--report", help="Report filename stored in owning run artifacts")
     parser.add_argument("--hook-event", choices=("subagentStart", "subagentStop"), help="Copilot CLI hook event name")
+    parser.add_argument("--timeout-sec", type=int, default=180, help="Hard-capped local quality-gate timeout")
     parser.add_argument("--repo", help="Expected GitHub owner/name for origin verification")
     parser.add_argument("--tasks-dir", default=".scratch")
     parser.add_argument("--source", default="")
@@ -202,6 +203,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--select", action="store_true")
     args = parser.parse_args(argv)
     root = Path(args.root).resolve()
+    if args.command == "issue-quality-check":
+        if args.issue is None or not args.run_id or not args.parent_session_id:
+            parser.error("issue-quality-check requires --issue --run-id --parent-session-id")
+        from task_harness.issue_execution import IssueExecutionError
+        from task_harness.issue_quality import quality_check
+        try:
+            status = quality_check(
+                root, args.issue, run_id=args.run_id,
+                parent_session_id=args.parent_session_id,
+                timeout_sec=args.timeout_sec,
+            )
+        except (IssueExecutionError, OSError, ValueError) as exc:
+            print(f"BLOCKED: {exc}", file=sys.stderr)
+            return 4
+        import json
+        print(json.dumps(status, indent=2, sort_keys=True))
+        return 0 if status.get("status") == "PASS" else 4
     if args.command == "issue-hook-event":
         # This command is invoked by Copilot's hook runner, NOT the model.
         # Hook stdout must be valid JSON without diagnostic chatter.
