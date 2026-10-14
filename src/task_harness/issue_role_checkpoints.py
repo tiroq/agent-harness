@@ -11,6 +11,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import re
+import secrets
 from pathlib import Path
 from typing import Any
 
@@ -164,10 +165,17 @@ def _read_report(root: Path, run_id: str, report: str) -> tuple[RoleReport, Pipe
     return role, verdict, paths, hashlib.sha256(raw).hexdigest()
 
 
-def role_begin(root: Path, issue: int, *, run_id: str, parent_session_id: str, subagent_id: str) -> dict[str, Any]:
-    """Checkpoint BEFORE reading subagent's result. Never invokes Copilot."""
-    if not _SUBAGENT_ID.fullmatch(subagent_id) or subagent_id == parent_session_id:
+def role_begin(
+    root: Path, issue: int, *, run_id: str, parent_session_id: str,
+    subagent_id: str | None = None,
+) -> dict[str, Any]:
+    """Capture Git BEFORE task; bind handle later if Copilot task is synchronous."""
+    if subagent_id is not None and (
+        not _SUBAGENT_ID.fullmatch(subagent_id) or subagent_id == parent_session_id
+    ):
         raise IssueExecutionError("invalid or parent-reused subagent identity")
+    unbound = subagent_id is None
+    ticket_id = subagent_id or ("pending-" + secrets.token_hex(16))
     with _guard(root, issue) as path:
         ledger = _parent(_load(path), issue=issue, run_id=run_id, session_id=parent_session_id)
         role_data = ledger.get("role_checkpoint")
@@ -188,7 +196,7 @@ def role_begin(root: Path, issue: int, *, run_id: str, parent_session_id: str, s
                 raise IssueExecutionError("unfinished subagent checkpoint; cannot issue second ticket")
         try:
             ticket = state.request(
-                run_id=run_id, session_id=subagent_id,
+                run_id=run_id, session_id=ticket_id,
                 head_sha=observed.head_sha, diff_sha=observed.diff_sha,
             )
         except PipelineError as exc:
@@ -197,13 +205,15 @@ def role_begin(root: Path, issue: int, *, run_id: str, parent_session_id: str, s
             "pipeline": _snapshot(state),
             "before": _observation_to_dict(observed),
             "identity_source": "ORCHESTRATOR_ASSERTED_UNVERIFIED",
+            "subagent_unbound": unbound,
             "last_change": _clock(),
         }
         _save(path, ledger)
         return {
             "run_id": run_id, "parent_session_id": parent_session_id,
             "role": ticket.role.value, "phase": ticket.phase.value,
-            "subagent_id": ticket.session_id,
+            "subagent_id": None if unbound else ticket.session_id,
+            "binding": "AWAITING_TASK_RESULT" if unbound else "ORCHESTRATOR_ASSERTED",
             "identity_source": "ORCHESTRATOR_ASSERTED_UNVERIFIED",
             "status": "ROLE_PENDING",
         }
@@ -211,6 +221,7 @@ def role_begin(root: Path, issue: int, *, run_id: str, parent_session_id: str, s
 
 def role_complete(
     root: Path, issue: int, *, run_id: str, parent_session_id: str, report: str,
+    subagent_id: str | None = None,
 ) -> dict[str, Any]:
     """Ingest a saved internal-subagent report + trusted current Git evidence."""
     with _guard(root, issue) as path:
@@ -224,6 +235,20 @@ def role_complete(
             raise IssueExecutionError("role ticket does not belong to parent run")
         before = _observation_from_dict(role_data["before"])
         role_report, verdict, paths, report_sha = _read_report(root, run_id, report)
+        if role_data.get("subagent_unbound"):
+            # A synchronous Copilot task returns its handle only AFTER it
+            # finishes. Never confuse our temporary ticket with a real agent.
+            if (
+                not isinstance(subagent_id, str)
+                or not _SUBAGENT_ID.fullmatch(subagent_id)
+                or subagent_id == parent_session_id
+                or subagent_id in state.accepted_sessions
+            ):
+                raise IssueExecutionError("actual Copilot subagent ID required after task")
+            ticket = dataclasses.replace(ticket, session_id=subagent_id)
+            state.pending = ticket
+        elif subagent_id is not None and subagent_id != ticket.session_id:
+            raise IssueExecutionError("subagent ID differs from original checkpoint binding")
         observed = _git(ledger, root, issue)
         try:
             phase = accept_role_checkpoint(
