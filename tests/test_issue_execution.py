@@ -353,7 +353,14 @@ def test_real_fake_copilot_process_and_same_session_resume(controlled_issue, mon
     logged_args = __import__("json").loads(Path(first["log"]).read_text())
     assert f"--session-id={session}" in logged_args
 
+    # A restarted parent process must not discard earlier delegated-role
+    # evidence from the SAME parent Copilot session.
+    with execution._guard(root, 1) as state_path:
+        ledger = execution._load(state_path)
+        ledger["role_checkpoint"] = {"test_marker": "preserved"}
+        execution._save(state_path, ledger)
     second = execution.issue_run(root, 1, execute=True, resume=True)
+    assert second["role_checkpoint"] == {"test_marker": "preserved"}
     assert second["status"] == "SESSION_EXITED"
     assert second["attempt"] == 2
     assert second["previous_run_id"] == first["run_id"]
