@@ -156,9 +156,17 @@ class LocalGitEvidence:
         else:
             diff_sha = digest.hexdigest()
         # A commit audit must confirm parent via git, never from role prose.
-        parent_raw = self._git("rev-parse", "HEAD^")
-        parent = parent_raw.decode().strip() if parent_raw else None
+        parents = self._git("rev-list", "--parents", "-n", "1", "HEAD").decode().split()
+        parent = parents[1] if len(parents) > 1 else None
+        changed_commit = self._git(
+            "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", "-z", "HEAD"
+        )
+        commit_paths = tuple(sorted(
+            name.decode("utf-8", errors="surrogateescape")
+            for name in changed_commit.split(bytes([0])) if name
+        ))
         return GitObservation(
             head_sha=head, diff_sha=diff_sha,
             changed_paths=tuple(sorted(paths)), parent_sha=parent,
+            commit_paths=commit_paths,
         )
