@@ -147,3 +147,15 @@ def test_hook_config_contains_both_lifecycle_events(tmp_path):
         assert definition["type"] == "command"
         assert "issue-hook-event" in definition["bash"]
         assert definition["timeoutSec"] <= 10
+
+
+def test_init_installs_hook_template_without_overwriting_existing_project(tmp_path):
+    from task_harness.cli import init_project
+    project = tmp_path / "another-repository"
+    assert init_project(project) == 0
+    hook = project / ".github" / "hooks" / "task-harness.json"
+    data = json.loads(hook.read_text())
+    assert set(data["hooks"]) == {"subagentStart", "subagentStop"}
+    hook.write_text('{"custom":"keep existing hook"}\n')
+    assert init_project(project) == 0
+    assert json.loads(hook.read_text()) == {"custom": "keep existing hook"}
