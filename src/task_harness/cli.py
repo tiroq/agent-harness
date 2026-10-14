@@ -215,8 +215,6 @@ def main(argv: list[str] | None = None) -> int:
                 if not args.run_id or not args.parent_session_id:
                     parser.error(f"{args.command} requires --run-id and --parent-session-id")
                 if args.command == "issue-role-begin":
-                    if not args.subagent_id:
-                        parser.error("issue-role-begin requires --subagent-id")
                     status = role_begin(
                         root, args.issue, run_id=args.run_id,
                         parent_session_id=args.parent_session_id,
@@ -228,6 +226,7 @@ def main(argv: list[str] | None = None) -> int:
                     status = role_complete(
                         root, args.issue, run_id=args.run_id,
                         parent_session_id=args.parent_session_id, report=args.report,
+                        subagent_id=args.subagent_id,
                     )
         except (IssueExecutionError, OSError, ValueError) as exc:
             print(f"BLOCKED: {exc}", file=sys.stderr)
