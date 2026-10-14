@@ -19,7 +19,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-from .core.copilot_cli import copilot_arguments
+from .core.copilot_cli import copilot_arguments, CopilotBillingPolicy
 from .core.lifecycle import DeliveryPhase
 from .issue_preflight import IssuePreflightError, IssuePreflightResult, inspect_issue
 
@@ -248,7 +248,13 @@ def issue_run(
             if previous is not None:
                 raise IssueExecutionError("previous run exists; explicit issue-resume required")
             session_id = str(uuid.uuid4())
-        args = copilot_arguments(model=model, allow_all=True) + [f"--session-id={session_id}"]
+        try:
+            billing_policy = CopilotBillingPolicy.from_environment()
+        except ValueError as exc:
+            raise IssueExecutionError(f"invalid Copilot billing configuration: {exc}") from exc
+        args = copilot_arguments(
+            model=model, allow_all=True, billing_policy=billing_policy
+        ) + [f"--session-id={session_id}"]
         # One top-level Copilot process owns the Issue. These coordinates
         # describe local role-report checkpoints for INTERNAL delegated agents.
         # The roles must never launch separate Copilot CLI sessions.
@@ -291,6 +297,7 @@ def issue_run(
             "run_id": run_id,
             "session_id": session_id,
             "model": model,
+            "billing_policy": billing_policy.as_dict(),
             "attempt": 1 if not previous else int(previous.get("attempt", 1)) + 1,
             "previous_run_id": None if not previous else previous["run_id"],
             "status": "STARTING",
