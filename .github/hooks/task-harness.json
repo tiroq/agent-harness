@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "hooks": {
+    "subagentStart": [
+      {
+        "type": "command",
+        "bash": "if [ -n \"${HARNESS_RUN_ID:-}\" ]; then python3 -m task_harness.cli issue-hook-event --root \"$HARNESS_ROOT\" --issue \"$ISSUE_NUMBER\" --run-id \"$HARNESS_RUN_ID\" --parent-session-id \"$HARNESS_PARENT_SESSION_ID\" --hook-event subagentStart; else printf '{}\\n'; fi",
+        "timeoutSec": 10
+      }
+    ],
+    "subagentStop": [
+      {
+        "type": "command",
+        "bash": "if [ -n \"${HARNESS_RUN_ID:-}\" ]; then python3 -m task_harness.cli issue-hook-event --root \"$HARNESS_ROOT\" --issue \"$ISSUE_NUMBER\" --run-id \"$HARNESS_RUN_ID\" --parent-session-id \"$HARNESS_PARENT_SESSION_ID\" --hook-event subagentStop; else printf '{}\\n'; fi",
+        "timeoutSec": 10
+      }
+    ]
+  }
+}
