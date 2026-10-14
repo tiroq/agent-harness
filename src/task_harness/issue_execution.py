@@ -257,11 +257,12 @@ def issue_run(
             f"HARNESS_RUN_ID: {run_id}\n"
             f"HARNESS_PARENT_SESSION_ID: {session_id}\n"
             f"ARTIFACT_ROOT: {artifacts}\n"
-            "INTERNAL_ROLE_CHECKPOINTS: use issue-role-begin after Copilot task "
-            "returns the actual subagent handle and BEFORE its Git changes; "
-            "use issue-role-complete on the resulting saved .md report. "
-            "If invocation identity or pre-change observation was not available, "
-            "mark provenance UNVERIFIED and do not claim audit/readiness.\n"
+            "INTERNAL_ROLE_CHECKPOINTS: call issue-role-begin BEFORE "
+            "delegating to Copilot task, then use issue-role-complete with "
+            "the real returned subagent handle and saved .md report. "
+            "Never launch another top-level Copilot process for a role. "
+            "The checkpoint provenance remains UNVERIFIED without trusted "
+            "Copilot task events; do not claim audit/readiness.\n"
             + prompt
         )
         # Repeat the time-sensitive remote ownership check right before launch.
