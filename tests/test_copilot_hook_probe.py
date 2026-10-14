@@ -7,6 +7,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -84,3 +85,36 @@ def test_probe_fake_cli_emits_two_events_in_isolated_repository(tmp_path):
     assert data["worker_start_count"] == 1
     assert data["worker_stop_count"] == 1
     assert data["same_parent_session"] is True
+
+
+def test_probe_failure_retains_private_cli_diagnostics(tmp_path):
+    fake = tmp_path / "copilot"
+    fake.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "print('FAKE_COPILOT_UNSUPPORTED_OPTION', flush=True)\n"
+        "sys.exit(2)\n",
+        encoding="utf-8",
+    )
+    fake.chmod(0o700)
+    env = {**os.environ, "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"]}
+    result = subprocess.run(
+        [sys.executable, str(PROBE), "--live", "--timeout-sec", "15"],
+        cwd=tmp_path, env=env, capture_output=True, text=True,
+        timeout=20, check=False,
+    )
+    assert result.returncode == 4
+    assert result.stdout.startswith("{")
+    payload = json.loads(result.stdout)
+    assert payload["verdict"] == "FAIL"
+    assert "LIVE_PROBE_START" in result.stderr
+    marker = "Private probe artifacts: "
+    assert marker in result.stderr
+    folder = Path(result.stderr.split(marker, 1)[1].splitlines()[0].strip())
+    try:
+        assert (folder / "copilot-output.log").read_text().strip() == (
+            "FAKE_COPILOT_UNSUPPORTED_OPTION"
+        )
+        assert (folder / ".github" / "hooks" / "probe.json").exists()
+    finally:
+        shutil.rmtree(folder)
