@@ -315,6 +315,50 @@ The earlier `RoleTransport`/`drive_pipeline` remains a standalone
 multiple Copilot subprocesses. The production source of internal role
 delegation remains the one Copilot orchestrator.
 
+## Controlled real Copilot subagent hook probe
+
+To test delivery of `subagentStart` and `subagentStop` from the **installed
+Copilot CLI** without mutating an Issue/worktree, use the isolated operator
+probe. This is a **separate** diagnostic from `issue-run --execute`; it does
+not run the Issue #1 delivery pipeline or attest role-to-PR readiness.
+
+```bash
+# No model/API call: validates fixture setup and prints dry-run metadata.
+python3 scripts/probe-copilot-subagent-hooks.py
+
+# ONE isolated Copilot CLI invocation with one requested internal custom
+# subagent and only the task tool available. This MAY consume AI credits:
+python3 scripts/probe-copilot-subagent-hooks.py --live --timeout-sec 120
+```
+
+The probe creates a throwaway Git repository with a custom
+`hook-probe-coordinator` and `hook-probe-worker`, registers two project hook
+commands, opts in to repo hooks in noninteractive `-p` mode via
+`GITHUB_COPILOT_PROMPT_MODE_REPO_HOOKS=true`, and asks the coordinator to
+delegate once. It denies shell/write/URL tools and builtin MCP, limits the
+available tool set to `task`, uses a soft per-response
+`--max-ai-credits=2` limit and an outer process-group timeout. This is
+not an absolute spend ceiling: invoking the parent and worker can consume
+more than one model call. Neither BrandForge nor agent-harness Issue
+worktrees/ledgers/PRs are modified.
+
+The summary is PASS only if the CLI exited successfully and exactly one
+matching custom worker `subagentStart` and `subagentStop` were observed
+with the same parent session ID, matching isolated cwd, nonempty
+`subagentStop.agentId` and `stopReason=end_turn`. Only short hashes of
+IDs are retained in the temporary event log; the potentially sensitive
+raw final worker response is never written to that log. The temporary
+repository and CLI output are deleted after the run unless `--keep` is
+requested; `--keep` stores private diagnostics under a printed `/tmp`
+path and requires manual cleanup.
+
+If the probe returns FAIL, report its JSON verdict and diagnostic tail.
+Do not start the real Issue executor or call its `--execute` on the
+basis of a failed smoke test. Note that a successful isolated hook probe
+proves CLI delivery in that environment only; the production ledger
+association, independent auditor gates and non-disableable event provenance
+still need a separately authorized one-parent-session end-to-end run.
+
 ## Tool permissions
 
 Default runner mode enables broad Copilot tools but denies destructive/history-changing commands, pushes, privilege escalation, recursive chmod, and ad-hoc dependency installation. Use `--narrow-tools` for a project with stricter policy. The deny-list is a safety boundary, not a replacement for code review.
