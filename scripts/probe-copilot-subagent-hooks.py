@@ -176,6 +176,22 @@ def run_copilot(root: Path, *, model: str, timeout_sec: int) -> tuple[int | None
                 pass
             proc.wait()
             exit_code = None
+        except KeyboardInterrupt:
+            # Prevent orphaned Copilot subprocesses if the operator
+            # interrupts the smoke probe in an interactive terminal.
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                proc.wait()
+            raise
     return exit_code, timed_out
 
 
@@ -195,6 +211,7 @@ def main(argv: list[str] | None = None) -> int:
         return 4
     tmp = Path(tempfile.mkdtemp(prefix="ah-subagent-hook-probe-"))
     os.chmod(tmp, 0o700)
+    preserve_artifacts = args.keep
     try:
         create_fixture(tmp)
         if not args.live:
@@ -204,6 +221,9 @@ def main(argv: list[str] | None = None) -> int:
                 "next": "Pass --live for one bounded read-only Copilot subagent request",
             }, indent=2))
             return 0
+        # Keep this early, flushed message even if the CLI or terminal dies.
+        print("LIVE_PROBE_START: running isolated Copilot subprocess; logs are private",
+              flush=True)
         exit_code, timed_out = run_copilot(tmp, model=args.model, timeout_sec=args.timeout_sec)
         event_file = tmp / ".github" / "hooks" / "probe-events.jsonl"
         events = []
@@ -219,15 +239,25 @@ def main(argv: list[str] | None = None) -> int:
             result["reason"].append("Copilot timed out; process group was stopped")
         print(json.dumps(result, indent=2, sort_keys=True))
         if result["verdict"] != "PASS":
-            output = (tmp / "copilot-output.log").read_text(
-                encoding="utf-8", errors="replace"
-            )
-            print("Copilot diagnostic (last 1200 characters):", file=sys.stderr)
-            print(output[-1200:], file=sys.stderr)
+            preserve_artifacts = True
+            print("Probe returned FAIL. Private diagnostic files are retained, "
+                  "including copilot-output.log.", file=sys.stderr)
         return 0 if result["verdict"] == "PASS" else 4
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        # No traceback and no silent loss of the failing CLI's diagnostics.
+        preserve_artifacts = True
+        print(f"PROBE_ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 4
+    except KeyboardInterrupt:
+        preserve_artifacts = True
+        print("PROBE_INTERRUPTED: child group stopped; diagnostics retained",
+              file=sys.stderr)
+        return 130
     finally:
-        if args.keep:
-            print(f"Private probe artifacts: {tmp}", file=sys.stderr)
+        if preserve_artifacts:
+            print(f"Private probe artifacts: {tmp}", file=sys.stderr, flush=True)
+            print("Do not share complete copilot-output.log without redacting "
+                  "credentials or private information.", file=sys.stderr)
         else:
             shutil.rmtree(tmp)
 
