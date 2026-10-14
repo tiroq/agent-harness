@@ -175,3 +175,24 @@ def test_quality_gate_unknown_blocks_pre_audit_instead_of_fabricating_green(pare
         checks.role_begin(root, 1, run_id=RUN, parent_session_id=PARENT,
                           subagent_id="subagent-auditor-004")
     assert checks.role_status(root, 1)["status"] == "CHECKPOINTED"
+
+
+def test_role_checkpoint_cli_is_explicit_and_readonly_status(tmp_path: Path, capsys):
+    from task_harness.cli import main
+    root = tmp_path / "empty"
+    assert main(["issue-role-status", "--root", str(root), "--issue", "1"]) == 0
+    assert '"status": "NOT_STARTED"' in capsys.readouterr().out
+    assert not (root / ".copilot-workflow").exists()
+    with pytest.raises(SystemExit) as error:
+        main(["issue-role-begin", "--root", str(root), "--issue", "1"])
+    assert error.value.code == 2
+
+
+def test_malformed_checkpoint_ledger_fails_closed(parent):
+    root, _, _ = parent
+    with _guard(root, 1) as path:
+        ledger = _load(path)
+        ledger["role_checkpoint"] = {"pipeline": {"invalid": True}, "before": None}
+        _save(path, ledger)
+    with pytest.raises(IssueExecutionError, match="corrupt role checkpoint"):
+        checks.role_status(root, 1)
