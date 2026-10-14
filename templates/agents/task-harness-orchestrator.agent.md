@@ -33,31 +33,37 @@ session. You must delegate with `list_agents`, `task`, `read_agent` and
 `write_agent` to existing named internal roles. Do not start additional
 `copilot` commands or new parent sessions to obtain role independence.
 
-When the launch supplies `HARNESS_RUN_ID`, `HARNESS_PARENT_SESSION_ID`
-and `ARTIFACT_ROOT`, the Issue ledger supports internal checkpoints.
-Only when the Copilot task tool actually exposes the internal subagent
-handle **before** that subagent changes files, record its begin checkpoint:
+When launch supplies `HARNESS_RUN_ID`, `HARNESS_PARENT_SESSION_ID`,
+`HARNESS_ROOT`, `ISSUE_NUMBER` and `ARTIFACT_ROOT`, capture a
+**pre-change** checkpoint BEFORE calling the internal Copilot `task`.
+The expected role is returned by the typed pipeline:
 
 ```sh
 python3 -m task_harness.cli issue-role-begin --root "$HARNESS_ROOT" \
   --issue "$ISSUE_NUMBER" --run-id "$HARNESS_RUN_ID" \
-  --parent-session-id "$HARNESS_PARENT_SESSION_ID" \
-  --subagent-id "<actual task/read_agent handle>"
+  --parent-session-id "$HARNESS_PARENT_SESSION_ID"
 ```
 
-Then save the subagent's complete report into a single .md file directly
-under `ARTIFACT_ROOT`, with distinct `ROLE`, `GENERATED_BY_ROLE`,
-`AGENT_SESSION_ID` (the same tool subagent handle) and `VERDICT` fields,
-and checkpoint the outcome:
+Then delegate through Copilot's existing `task` tool. When the task returns
+the real subagent handle, save the report directly under `ARTIFACT_ROOT`
+with unique `ROLE`, `GENERATED_BY_ROLE`, `AGENT_SESSION_ID` and
+`VERDICT` fields. Bind that returned ID and verify the post-change Git
+snapshot:
 
 ```sh
 python3 -m task_harness.cli issue-role-complete --root "$HARNESS_ROOT" \
   --issue "$ISSUE_NUMBER" --run-id "$HARNESS_RUN_ID" \
-  --parent-session-id "$HARNESS_PARENT_SESSION_ID" --report "reviewer.md"
+  --parent-session-id "$HARNESS_PARENT_SESSION_ID" \
+  --subagent-id "<actual task tool handle>" --report "reviewer.md"
 ```
 
-If the Copilot API does not expose a pre-change handle, **do not invent a
-subagent ID or backdate a Git snapshot**. Record the missing provenance as a
+If the task tool exposes an internal handle before any changes, you MAY
+bind it at `issue-role-begin --subagent-id <handle>` instead. Never use the
+parent Copilot session UUID as an internal agent ID. Do not create a second
+Copilot CLI session for a role.
+
+If the Copilot API does not expose any actual agent handle after the task,
+**do not invent a subagent ID or backdate a Git snapshot**. Record the missing provenance as a
 blocker and use the ordinary independent role report review. Checkpoint
 entries are `ORCHESTRATOR_ASSERTED_UNVERIFIED`; they are useful for consistency
 but cannot independently authorize local commit, PR publication or merge.
