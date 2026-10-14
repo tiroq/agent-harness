@@ -207,6 +207,71 @@ a durable CANCELLED exit. No premium requests or network access are used.
 These tests require Linux `/proc` and should be run on tsrv before
 authorizing a real paid session.
 
+## Copilot internal subagent checkpoints (one parent session)
+
+**One** `task-harness issue-run --execute` starts **one** top-level Copilot CLI
+process/session with a repository-local `task-harness-orchestrator`. The
+orchestrator delegates implementation/review/test/audit to *internal*
+Copilot agents with `task`, `read_agent`, and `write_agent`. Agent Harness
+does NOT start a separate top-level `copilot` process per role.
+
+The parent launch now exposes `HARNESS_ROOT`, `ISSUE_NUMBER`,
+`HARNESS_RUN_ID`, `HARNESS_PARENT_SESSION_ID`, and `ARTIFACT_ROOT` to its
+orchestrator. The checkpoint commands operate inside the **existing** per-Issue
+locked run ledger (no duplicate process/role supervisor or database):
+
+```bash
+# Orchestrator only: after obtaining actual internal task agent handle,
+# before that delegated role changes any files:
+python3 -m task_harness.cli issue-role-begin \
+  --root "$HARNESS_ROOT" --issue "$ISSUE_NUMBER" \
+  --run-id "$HARNESS_RUN_ID" \
+  --parent-session-id "$HARNESS_PARENT_SESSION_ID" \
+  --subagent-id "<task tool agent handle>"
+
+# Save the subagent report directly as $ARTIFACT_ROOT/reviewer.md,
+# with ROLE, GENERATED_BY_ROLE, AGENT_SESSION_ID and VERDICT metadata.
+python3 -m task_harness.cli issue-role-complete \
+  --root "$HARNESS_ROOT" --issue "$ISSUE_NUMBER" \
+  --run-id "$HARNESS_RUN_ID" \
+  --parent-session-id "$HARNESS_PARENT_SESSION_ID" --report reviewer.md
+
+# Read-only diagnostic from a second terminal:
+python3 -m task_harness.cli issue-role-status --root . --issue 1
+```
+
+`issue-role-begin` requires a live exact parent PID/session, the correct
+Issue-owned worktree, a previously unused internal subagent ID, and a clean
+phase transition in the existing typed delivery pipeline. It captures a
+trusted local Git snapshot **before** the delegated subagent works.
+`issue-role-complete` takes only a bounded, non-symlink .md file in
+the active parent's artifact directory, rejects duplicate/missing/mismatched
+role provenance, compares the current Git HEAD/diff/files to the saved
+snapshot, and records the accepted phase in that SAME parent's ledger.
+The checkpoint survives `issue-resume` of the parent process. A stranded
+pending checkpoint remains blocked rather than being silently promoted
+or dropped.
+
+**Trust boundary:** the current Copilot CLI orchestration exposes internal
+subagent identity to the orchestrator, but these CLI checkpoint commands
+receive that identity from the *orchestrator's input*, not an authenticated
+tool event stream. They mark every checkpoint
+`ORCHESTRATOR_ASSERTED_UNVERIFIED`; model report text or the claimed
+subagent handle can establish consistency, **not independent authenticity**.
+No checkpoint can make a PR READY, mark an Issue DONE, or authorize a merge.
+If the parent cannot see a subagent's handle before its changes, do not
+invent one or reconstruct a false pre-change snapshot: report a provenance
+blocker. The quality prerequisite contract is also fail-closed:
+`issue-role-begin` cannot invoke pre-commit audit without a trusted
+configured quality-check input, which is not yet wired. Adding a trusted
+Copilot tool event source and mandatory external quality-check provenance is
+the next integration gate.
+
+The earlier `RoleTransport`/`drive_pipeline` remains a standalone
+**hermetic test abstraction**, not a production instruction to launch
+multiple Copilot subprocesses. The production source of internal role
+delegation remains the one Copilot orchestrator.
+
 ## Tool permissions
 
 Default runner mode enables broad Copilot tools but denies destructive/history-changing commands, pushes, privilege escalation, recursive chmod, and ad-hoc dependency installation. Use `--narrow-tools` for a project with stricter policy. The deny-list is a safety boundary, not a replacement for code review.
