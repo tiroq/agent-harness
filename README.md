@@ -221,28 +221,32 @@ orchestrator. The checkpoint commands operate inside the **existing** per-Issue
 locked run ledger (no duplicate process/role supervisor or database):
 
 ```bash
-# Orchestrator only: after obtaining actual internal task agent handle,
-# before that delegated role changes any files:
+# Orchestrator only: take snapshot BEFORE running the internal Copilot task.
+# Synchronous Copilot task may return subagent ID only after completion.
 python3 -m task_harness.cli issue-role-begin \
   --root "$HARNESS_ROOT" --issue "$ISSUE_NUMBER" \
   --run-id "$HARNESS_RUN_ID" \
-  --parent-session-id "$HARNESS_PARENT_SESSION_ID" \
-  --subagent-id "<task tool agent handle>"
+  --parent-session-id "$HARNESS_PARENT_SESSION_ID"
 
-# Save the subagent report directly as $ARTIFACT_ROOT/reviewer.md,
-# with ROLE, GENERATED_BY_ROLE, AGENT_SESSION_ID and VERDICT metadata.
+# Invoke Copilot's INTERNAL task/read_agent tools; DO NOT launch another
+# top-level Copilot process. When the task returns an actual subagent handle,
+# save the report as $ARTIFACT_ROOT/reviewer.md with ROLE,
+# GENERATED_BY_ROLE, AGENT_SESSION_ID and VERDICT.
 python3 -m task_harness.cli issue-role-complete \
   --root "$HARNESS_ROOT" --issue "$ISSUE_NUMBER" \
   --run-id "$HARNESS_RUN_ID" \
-  --parent-session-id "$HARNESS_PARENT_SESSION_ID" --report reviewer.md
+  --parent-session-id "$HARNESS_PARENT_SESSION_ID" \
+  --subagent-id "<actual task tool handle>" --report reviewer.md
 
 # Read-only diagnostic from a second terminal:
 python3 -m task_harness.cli issue-role-status --root . --issue 1
 ```
 
 `issue-role-begin` requires a live exact parent PID/session, the correct
-Issue-owned worktree, a previously unused internal subagent ID, and a clean
-phase transition in the existing typed delivery pipeline. It captures a
+Issue-owned worktree, and a clean phase transition in the existing typed
+delivery pipeline. It can reserve an internal ticket BEFORE the actual
+subagent handle is known; `issue-role-complete --subagent-id` binds the
+handle returned by a synchronous Copilot `task` and verifies it is unused. It captures a
 trusted local Git snapshot **before** the delegated subagent works.
 `issue-role-complete` takes only a bounded, non-symlink .md file in
 the active parent's artifact directory, rejects duplicate/missing/mismatched
@@ -259,9 +263,9 @@ tool event stream. They mark every checkpoint
 `ORCHESTRATOR_ASSERTED_UNVERIFIED`; model report text or the claimed
 subagent handle can establish consistency, **not independent authenticity**.
 No checkpoint can make a PR READY, mark an Issue DONE, or authorize a merge.
-If the parent cannot see a subagent's handle before its changes, do not
-invent one or reconstruct a false pre-change snapshot: report a provenance
-blocker. The quality prerequisite contract is also fail-closed:
+If Copilot does not expose an actual subagent handle even after
+the task returns, do not invent one: report a provenance blocker. Always
+capture the pre-change Git snapshot before delegating. The quality prerequisite contract is also fail-closed:
 `issue-role-begin` cannot invoke pre-commit audit without a trusted
 configured quality-check input, which is not yet wired. Adding a trusted
 Copilot tool event source and mandatory external quality-check provenance is
