@@ -101,6 +101,44 @@ def run_one_role(
     return state.accept(evidence)
 
 
+class QualityProvider(Protocol):
+    def checks(self) -> tuple[PrerequisiteCheck, ...]: ...
+
+
+def drive_pipeline(
+    state: PipelineState,
+    *,
+    transport: RoleTransport,
+    git: GitEvidence,
+    quality: QualityProvider,
+    max_roles: int = 12,
+) -> PipelinePhase:
+    """Execute independent roles in order, bounded against repeated REWORK.
+
+    This reusable core has no GitHub writes or automatic merge. Real transports
+    must implement process ownership and durable state in their host adapters;
+    a fake transport can exercise the whole lifecycle without Copilot charges.
+    """
+    if max_roles < 1:
+        raise PipelineError("role invocation limit must be positive")
+    for index in range(max_roles):
+        if state.phase in {
+            PipelinePhase.LOCAL_AUDITED, PipelinePhase.BLOCKED, PipelinePhase.FAILED
+        }:
+            return state.phase
+        prerequisites = (
+            quality.checks() if state.phase is PipelinePhase.PRE_COMMIT_AUDIT else ()
+        )
+        run_one_role(
+            state, transport=transport, git=git,
+            run_id=f"role-{index}-{secrets.token_hex(6)}",
+            quality=prerequisites,
+        )
+    if state.phase is not PipelinePhase.LOCAL_AUDITED:
+        raise PipelineError("bounded independent-role limit reached; no automatic extra spend")
+    return state.phase
+
+
 class LocalGitEvidence:
     """Bounded local trusted observations; no Git mutation or fetch."""
 
