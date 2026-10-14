@@ -252,3 +252,52 @@ def test_explicit_task_handle_must_match_bound_checkpoint(parent):
             report=_report(artifacts), subagent_id="subagent-other-999",
         )
     assert checks.role_status(root, 1)["accepted_roles"] == 0
+
+
+def test_parent_resume_reconciles_old_pending_role_only_when_git_unchanged(parent):
+    root, artifacts, observed = parent
+    checks.role_begin(root, 1, run_id=RUN, parent_session_id=PARENT)
+    new_run = "20261014T010000Z-resume001"
+    with _guard(root, 1) as path:
+        ledger = _load(path)
+        ledger["previous_run_id"] = RUN
+        ledger["run_id"] = new_run
+        _save(path, ledger)
+    recovered = checks.role_reconcile(root, 1, run_id=new_run, parent_session_id=PARENT)
+    assert recovered["recovery"] == "RETRY_SAME_ROLE_ALLOWED"
+    assert recovered["phase"] == "IMPLEMENT"
+    assert checks.role_status(root, 1)["accepted_roles"] == 0
+    fresh = checks.role_begin(root, 1, run_id=new_run, parent_session_id=PARENT)
+    assert fresh["role"] == "implementer"
+    ledger = _load(root / ".copilot-workflow" / "issue-runs" / "issue-1.json")
+    assert ledger["session_id"] == PARENT
+    assert ledger["role_recovery"][0]["abandoned_old_run"] == RUN
+
+
+def test_parent_resume_refuses_to_discard_modified_or_unverified_role_work(parent):
+    root, _, observed = parent
+    checks.role_begin(root, 1, run_id=RUN, parent_session_id=PARENT)
+    new_run = "20261014T010000Z-resume002"
+    with _guard(root, 1) as path:
+        ledger = _load(path)
+        ledger["previous_run_id"] = RUN
+        ledger["run_id"] = new_run
+        _save(path, ledger)
+    observed[0] = GitObservation(HEAD, DIFF, ("src/partial.py",))
+    verdict = checks.role_reconcile(root, 1, run_id=new_run, parent_session_id=PARENT)
+    assert verdict["recovery"] == "BLOCKED_UNVERIFIED_ROLE_CHANGES"
+    assert checks.role_status(root, 1)["status"] == "ROLE_PENDING"
+
+
+def test_parent_resume_refuses_pending_role_with_unknown_ancestry(parent):
+    root, _, _ = parent
+    checks.role_begin(root, 1, run_id=RUN, parent_session_id=PARENT)
+    with _guard(root, 1) as path:
+        ledger = _load(path)
+        ledger["previous_run_id"] = "unrelated"
+        ledger["run_id"] = "20261014T010000Z-resume003"
+        _save(path, ledger)
+    result = checks.role_reconcile(
+        root, 1, run_id="20261014T010000Z-resume003", parent_session_id=PARENT,
+    )
+    assert result["recovery"] == "BLOCKED_RUN_ANCESTRY_UNKNOWN"
