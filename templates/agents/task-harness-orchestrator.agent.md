@@ -70,3 +70,34 @@ but cannot independently authorize local commit, PR publication or merge.
 Only a later trusted Copilot event adapter can attest tool-level identity.
 A quality-gate UNKNOWN also refuses to open a premium pre-commit auditor
 checkpoint. One parent session remains the process owner for resume/cancel.
+
+## Internal hook provenance and quality gate (Issue mode)
+
+Copilot CLI project hooks under `.github/hooks/task-harness.json` now
+observe `subagentStart` and `subagentStop` inside the SAME parent Copilot
+session. Do not forge or manually replay hook JSON. The `subagentStop.agentId`
+must agree with the role report's `AGENT_SESSION_ID`. Hook observations are
+`COPILOT_HOOK_OBSERVED_UNATTESTED` (not cryptographically authenticated),
+and do not establish PR readiness or merge authority.
+
+After independent review + test have PASS checkpoint evidence, and BEFORE
+you launch the pre-commit evidence auditor, run the fixed committed global
+quality gate in the Issue worktree:
+
+```sh
+python3 -m task_harness.cli issue-quality-check --root "$HARNESS_ROOT" \
+  --issue "$ISSUE_NUMBER" --run-id "$HARNESS_RUN_ID" \
+  --parent-session-id "$HARNESS_PARENT_SESSION_ID"
+```
+
+Only `PASS` bound to the same HEAD/diff allows `issue-role-begin` for
+the pre-commit evidence auditor. The command executes ONLY an unchanged
+committed `scripts/quality-gate.sh` and rejects missing/modified scripts,
+timeouts, red checks, and stale Git snapshots. If unavailable, BLOCK instead
+of assuming the gate is green or spending another premium auditor call.
+Do not rewrite repository gate code to force success.
+
+After explicit parent `issue-resume` with a pending old role checkpoint,
+`issue-role-reconcile` may permit retry of the same role ONLY when the old
+role made no Git changes and previous run ancestry is confirmed. Otherwise
+preserve the blocker and inspect the evidence, without a duplicate launch.
