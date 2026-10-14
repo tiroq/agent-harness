@@ -181,7 +181,7 @@ def queue_tasks(root: Path, tasks_dir: str, model: str, limit: int | None, selec
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="task-harness")
-    parser.add_argument("command", choices=("init", "list", "run", "queue", "issue-preflight", "issue-run", "issue-resume", "issue-status", "issue-reconcile", "issue-cancel", "issue-role-begin", "issue-role-complete", "issue-role-status", "issue-hook-event", "issue-quality-check"))
+    parser.add_argument("command", choices=("init", "list", "run", "queue", "issue-preflight", "issue-run", "issue-resume", "issue-status", "issue-reconcile", "issue-cancel", "issue-role-begin", "issue-role-complete", "issue-role-status", "issue-hook-event", "issue-quality-check", "issue-role-reconcile"))
     parser.add_argument("--root", default=".")
     parser.add_argument("--issue", type=int, help="GitHub Issue number for issue-preflight")
     parser.add_argument("--expected-head", help="Expected 40-character PR head SHA")
@@ -239,12 +239,12 @@ def main(argv: list[str] | None = None) -> int:
             return 4
         print("{}")
         return 0
-    if args.command in {"issue-role-begin", "issue-role-complete", "issue-role-status"}:
+    if args.command in {"issue-role-begin", "issue-role-complete", "issue-role-status", "issue-role-reconcile"}:
         if args.issue is None:
             parser.error(f"{args.command} requires --issue")
         from task_harness.issue_execution import IssueExecutionError
         from task_harness.issue_role_checkpoints import (
-            role_begin, role_complete, role_status,
+            role_begin, role_complete, role_status, role_reconcile,
         )
         try:
             if args.command == "issue-role-status":
@@ -252,7 +252,12 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 if not args.run_id or not args.parent_session_id:
                     parser.error(f"{args.command} requires --run-id and --parent-session-id")
-                if args.command == "issue-role-begin":
+                if args.command == "issue-role-reconcile":
+                    status = role_reconcile(
+                        root, args.issue, run_id=args.run_id,
+                        parent_session_id=args.parent_session_id,
+                    )
+                elif args.command == "issue-role-begin":
                     status = role_begin(
                         root, args.issue, run_id=args.run_id,
                         parent_session_id=args.parent_session_id,
@@ -271,6 +276,8 @@ def main(argv: list[str] | None = None) -> int:
             return 4
         import json
         print(json.dumps(status, indent=2, sort_keys=True, default=str))
+        if args.command == "issue-role-reconcile" and str(status.get("recovery", "")).startswith("BLOCKED_"):
+            return 4
         return 0
     if args.command in {"issue-run", "issue-resume", "issue-status", "issue-reconcile", "issue-cancel"}:
         if args.issue is None:
