@@ -160,6 +160,53 @@ records exit status, the state remains conservatively active/unknown; it
 must not be automatically restarted or marked successful. This bounded
 session executor is Linux-only for safe cancellation (`/proc` identity).
 
+## Deterministic independent-role delivery lifecycle (Phase B/C foundation)
+
+The new reusable `task_harness.core.delivery_pipeline` and
+`task_harness.core.role_orchestration` modules implement the bounded
+**implementer → independent reviewer → test engineer → evidence auditor →
+committer → independent post-commit auditor** flow. This is a typed engine
+over an injected `RoleTransport` and trusted `GitEvidence` adapter rather
+than another BrandForge-specific shell state machine.
+
+The core generates a fresh role ticket and session identity for each
+independent invocation; accepts reports through the existing typed role
+provenance validator; rejects replay, stale run/diff/HEAD, or changes from
+read-only reviewer/auditor roles. A test engineer changing tests triggers
+a fresh review; a test engineer modifying production source is rejected
+against locally observed per-path content digests. Before the evidence
+auditor is invoked, mandatory checks must be explicitly PASS (UNKNOWN
+is not PASS). The auditor approves unique repository-relative paths and
+the exact diff; the committer must produce a child of the approved HEAD,
+commit **exactly** the approved files, and leave the worktree clean. The
+post-commit auditor verifies the same commit and clean boundary.
+
+The terminal core state is **`LOCAL_AUDITED`**, deliberately NOT GitHub
+PR_READY/DONE. `drive_pipeline` has a hard role-count cap and can be
+exercised with a hermetic mock role transport; `LocalGitEvidence` uses
+read-only Git commands, including binary tracked/untracked content digests,
+to supply independent evidence rather than accepting model claims.
+
+**Current integration boundary:** the generic role-transport interface
+and deterministic driver are implemented, but the paid Copilot subprocess
+for *each independent role* is not yet connected to the existing persistent
+Issue session/owner ledger. Thus this is not a production unattended
+role engine or a replacement for BrandForge's full review/publication
+workflow. The existing `issue-run --execute` remains a bounded
+orchestrator-session launcher; it does not yet automatically enforce this
+role engine. Do not conflate them until exact-head end-to-end dogfood passes.
+
+### Real process group crash/cancel tests
+
+`tests/test_process_crash_integration.py` starts the actual Linux
+`issue_execution.issue_run` launcher with an isolated fake `copilot`
+executable, then SIGKILLs the launcher while its fake child is alive.
+Recovery must refuse to call it INTERRUPTED while the child/group still
+exists; a separate test sends an owner-verified cancellation and requires
+a durable CANCELLED exit. No premium requests or network access are used.
+These tests require Linux `/proc` and should be run on tsrv before
+authorizing a real paid session.
+
 ## Tool permissions
 
 Default runner mode enables broad Copilot tools but denies destructive/history-changing commands, pushes, privilege escalation, recursive chmod, and ad-hoc dependency installation. Use `--narrow-tools` for a project with stricter policy. The deny-list is a safety boundary, not a replacement for code review.
