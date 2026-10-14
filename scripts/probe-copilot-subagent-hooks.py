@@ -142,7 +142,11 @@ def summarize(events: list[dict], exit_code: int | None) -> dict:
     }
 
 
-def run_copilot(root: Path, *, model: str, timeout_sec: int) -> tuple[int | None, bool]:
+def run_copilot(
+    root: Path, *, model: str, timeout_sec: int, billing_mode: str,
+) -> tuple[int | None, bool]:
+    if billing_mode not in {"legacy_premium_requests", "ai_credits"}:
+        raise ValueError("actual Copilot billing mode must be explicit")
     command = [
         "copilot", "-p", PROMPT,
         "--agent=hook-probe-coordinator",
@@ -154,10 +158,11 @@ def run_copilot(root: Path, *, model: str, timeout_sec: int) -> tuple[int | None
         "--disable-builtin-mcps",
         "--no-ask-user",
         "--no-auto-update",
-        # Copilot CLI documents a minimum 30-credit (soft) session cap.
-        # Actual usage may be lower, but the limit itself cannot be 2.
-        "--max-ai-credits=30",
     ]
+    if billing_mode == "ai_credits":
+        # CLI >= 1.0.96 requires a soft AI credit session cap >= 30.
+        # Legacy annual accounts count premium requests instead of credits.
+        command.append("--max-ai-credits=30")
     env = dict(os.environ)
     # Repository hooks are disabled by default for untrusted -p sessions.
     env["GITHUB_COPILOT_PROMPT_MODE_REPO_HOOKS"] = "true"
@@ -202,12 +207,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--live", action="store_true",
                         help="Opt in to ONE real Copilot model request (may use paid AI credits)")
     parser.add_argument("--model", default="gpt-5.3-codex")
+    parser.add_argument(
+        "--billing-mode", choices=("legacy_premium_requests", "ai_credits"),
+        help="Explicit account billing model; never auto-detected or converted",
+    )
     parser.add_argument("--timeout-sec", type=int, default=120)
     parser.add_argument("--keep", action="store_true",
                         help="Retain private temporary fixture/logs for manual inspection")
     args = parser.parse_args(argv)
     if not 10 <= args.timeout_sec <= 180:
         parser.error("timeout must be between 10 and 180 seconds")
+    if args.live and args.billing_mode is None:
+        parser.error(
+            "--live requires --billing-mode legacy_premium_requests|ai_credits; "
+            "the CLI does not expose trustworthy subscription auto-detection"
+        )
     if args.live and shutil.which("copilot") is None:
         print("BLOCKED: copilot executable is not installed/on PATH", file=sys.stderr)
         return 4
@@ -219,14 +233,18 @@ def main(argv: list[str] | None = None) -> int:
         if not args.live:
             print(json.dumps({
                 "verdict": "DRY_RUN", "real_copilot_executed": False,
-                "model": args.model, "fixture": str(tmp) if args.keep else "(temporary)",
+                "model": args.model, "billing_mode": args.billing_mode or "unconfigured",
+                "fixture": str(tmp) if args.keep else "(temporary)",
                 "next": "Pass --live for one bounded read-only Copilot subagent request",
             }, indent=2))
             return 0
         # Keep this early, flushed message even if the CLI or terminal dies.
         print("LIVE_PROBE_START: running isolated Copilot subprocess; logs are private",
               file=sys.stderr, flush=True)
-        exit_code, timed_out = run_copilot(tmp, model=args.model, timeout_sec=args.timeout_sec)
+        exit_code, timed_out = run_copilot(
+            tmp, model=args.model, timeout_sec=args.timeout_sec,
+            billing_mode=args.billing_mode,
+        )
         event_file = tmp / ".github" / "hooks" / "probe-events.jsonl"
         events = []
         if event_file.is_file():
