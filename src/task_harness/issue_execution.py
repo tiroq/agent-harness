@@ -249,6 +249,21 @@ def issue_run(
                 raise IssueExecutionError("previous run exists; explicit issue-resume required")
             session_id = str(uuid.uuid4())
         args = copilot_arguments(model=model, allow_all=True) + [f"--session-id={session_id}"]
+        # One top-level Copilot process owns the Issue. These coordinates
+        # describe local role-report checkpoints for INTERNAL delegated agents.
+        # The roles must never launch separate Copilot CLI sessions.
+        prompt = (
+            f"HARNESS_ROOT: {root.resolve()}\n"
+            f"HARNESS_RUN_ID: {run_id}\n"
+            f"HARNESS_PARENT_SESSION_ID: {session_id}\n"
+            f"ARTIFACT_ROOT: {artifacts}\n"
+            "INTERNAL_ROLE_CHECKPOINTS: use issue-role-begin after Copilot task "
+            "returns the actual subagent handle and BEFORE its Git changes; "
+            "use issue-role-complete on the resulting saved .md report. "
+            "If invocation identity or pre-change observation was not available, "
+            "mark provenance UNVERIFIED and do not claim audit/readiness.\n"
+            + prompt
+        )
         # Repeat the time-sensitive remote ownership check right before launch.
         try:
             from .issue_preflight import _remote_head
@@ -304,6 +319,13 @@ def issue_run(
                     args, cwd=preflight.worktree, stdin=stdin,
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     start_new_session=True, close_fds=True,
+                    env={
+                        **os.environ,
+                        "ARTIFACT_ROOT": str(artifacts),
+                        "HARNESS_ROOT": str(root.resolve()),
+                        "HARNESS_RUN_ID": run_id,
+                        "HARNESS_PARENT_SESSION_ID": session_id,
+                    },
                 )
             start = _proc_start(process.pid)
             if not start:
