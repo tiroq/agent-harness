@@ -292,6 +292,11 @@ def issue_run(
             "updated_at": _clock(),
             "log": str(log_path),
         }
+        # A parent Copilot --session-id continuation is still ONE session.
+        # Carry its internal-subagent checkpoints inside the same Issue ledger;
+        # never infer role completion from a prior process exit.
+        if previous is not None and previous.get("role_checkpoint") is not None:
+            state["role_checkpoint"] = previous["role_checkpoint"]
         _save(path, state)
         try:
             with prompt_path.open("rb") as stdin:
