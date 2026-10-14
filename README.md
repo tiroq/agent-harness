@@ -323,13 +323,31 @@ probe. This is a **separate** diagnostic from `issue-run --execute`; it does
 not run the Issue #1 delivery pipeline or attest role-to-PR readiness.
 
 ```bash
+# Important when using an interactive SSH shell: an earlier instruction
+# erroneously left "set -e" enabled globally. Turn it off so a failing
+# Copilot command cannot terminate the entire SSH terminal.
+set +e
+
 # No model/API call: validates fixture setup and prints dry-run metadata.
 python3 scripts/probe-copilot-subagent-hooks.py
+printf 'dry_run_exit=%s\\n' "$?"
+
+# Diagnose the CLI version independently before any model call:
+copilot --version
+printf 'version_exit=%s\\n' "$?"
 
 # ONE isolated Copilot CLI invocation with one requested internal custom
 # subagent and only the task tool available. This MAY consume AI credits:
 python3 scripts/probe-copilot-subagent-hooks.py --live --timeout-sec 120
+printf 'live_probe_exit=%s\\n' "$?"
 ```
+
+A previous operator command block used `set -e` **at the top level of the
+interactive SSH shell**. That setting persists after the block finishes;
+`copilot --version` or the probe returning nonzero can then exit the SSH
+shell itself, which looks like the terminal crashed. Use `set +e` before
+diagnosing, and never apply `set -e` globally for an interactive smoke test.
+For automated scripts that need it, use a separate `( set -e; ... )` subshell.
 
 The probe creates a throwaway Git repository with a custom
 `hook-probe-coordinator` and `hook-probe-worker`, registers two project hook
@@ -347,10 +365,13 @@ matching custom worker `subagentStart` and `subagentStop` were observed
 with the same parent session ID, matching isolated cwd, nonempty
 `subagentStop.agentId` and `stopReason=end_turn`. Only short hashes of
 IDs are retained in the temporary event log; the potentially sensitive
-raw final worker response is never written to that log. The temporary
-repository and CLI output are deleted after the run unless `--keep` is
-requested; `--keep` stores private diagnostics under a printed `/tmp`
-path and requires manual cleanup.
+raw final worker response is never written to that log. On PASS the temporary repository and CLI output are deleted unless
+`--keep` is requested. **On FAIL, CLI startup error, or Ctrl+C**, the probe
+now preserves its private temporary directory and prints its path to
+stderr; `copilot-output.log` captures the full subprocess output even when
+the terminal doesn't show it. Do not post this raw file publicly without
+redacting sensitive content. After diagnosing, remove it manually with a
+specific explicit path (never a broad `rm -rf /tmp/*`).
 
 If the probe returns FAIL, report its JSON verdict and diagnostic tail.
 Do not start the real Issue executor or call its `--execute` on the
