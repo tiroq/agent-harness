@@ -151,3 +151,47 @@ def test_quality_gate_argv_is_literal_and_sanitizes_internal_env(ready, monkeypa
         _save(path, ledger)
     monkeypatch.setenv("COPILOT_AUTOPILOT_AUTHORITATIVE_RUNNER", "1")
     assert quality_check(root, 1, run_id=RUN, parent_session_id=PARENT)["status"] == "PASS"
+
+
+def test_precommit_auditor_requires_observed_hook_and_matching_quality(ready):
+    import json
+    from task_harness.issue_subagent_hooks import ingest_hook_event
+    root, wt, _, _ = ready
+    assert quality_check(root, 1, run_id=RUN, parent_session_id=PARENT)["status"] == "PASS"
+    agent_id = "subagent-auditor-0001"
+    opened = checkpoints.role_begin(
+        root, 1, run_id=RUN, parent_session_id=PARENT, subagent_id=agent_id,
+    )
+    assert opened["role"] == "evidence-auditor"
+    artifact = root / ".copilot-workflow" / "runs" / RUN
+    artifact.mkdir(parents=True)
+    (artifact / "audit.md").write_text(
+        f"ROLE: evidence-auditor\nGENERATED_BY_ROLE: evidence-auditor\n"
+        f"AGENT_SESSION_ID: {agent_id}\nVERDICT: PASS\n"
+        "APPROVED_TASK_PATHS: src/item.py\n"
+    )
+    with pytest.raises(IssueExecutionError, match="requires observed Copilot subagentStop"):
+        checkpoints.role_complete(
+            root, 1, run_id=RUN, parent_session_id=PARENT,
+            report="audit.md", subagent_id=agent_id,
+        )
+    base = {
+        "sessionId": PARENT, "cwd": str(wt),
+        "agentName": "task-harness-evidence-auditor",
+        "timestamp": 1791950000000,
+    }
+    ingest_hook_event(root, 1, run_id=RUN, parent_session_id=PARENT,
+                      event_name="subagentStart", raw=json.dumps(base).encode())
+    ingest_hook_event(
+        root, 1, run_id=RUN, parent_session_id=PARENT,
+        event_name="subagentStop",
+        raw=json.dumps(dict(base, agentId=agent_id, agentType="custom",
+                            response="completed", stopReason="end_turn")).encode(),
+    )
+    completed = checkpoints.role_complete(
+        root, 1, run_id=RUN, parent_session_id=PARENT,
+        report="audit.md", subagent_id=agent_id,
+    )
+    assert completed["phase"] == "COMMIT"
+    assert completed["identity_source"] == "COPILOT_HOOK_OBSERVED_UNATTESTED"
+    assert completed["pr_ready"] is False
