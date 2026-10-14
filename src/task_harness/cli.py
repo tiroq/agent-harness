@@ -147,6 +147,13 @@ def init_project(root: Path) -> int:
         target.parent.mkdir(parents=True, exist_ok=True)
         if not target.exists():
             target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    # Install repo-scoped Copilot hooks for internal subagent evidence.
+    # Existing hook configuration is never overwritten by project init.
+    for source in sorted((template_root / "hooks").glob("*.json")):
+        target = root / ".github" / "hooks" / source.name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if not target.exists():
+            target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
     policy = root / "harness.yaml.example"
     policy_source = Path(__file__).resolve().parents[2] / "harness.yaml.example"
     if not policy_source.exists():
