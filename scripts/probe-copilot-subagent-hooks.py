@@ -154,7 +154,9 @@ def run_copilot(root: Path, *, model: str, timeout_sec: int) -> tuple[int | None
         "--disable-builtin-mcps",
         "--no-ask-user",
         "--no-auto-update",
-        "--max-ai-credits=2",
+        # Copilot CLI documents a minimum 30-credit (soft) session cap.
+        # Actual usage may be lower, but the limit itself cannot be 2.
+        "--max-ai-credits=30",
     ]
     env = dict(os.environ)
     # Repository hooks are disabled by default for untrusted -p sessions.
