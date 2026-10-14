@@ -159,3 +159,19 @@ def test_init_installs_hook_template_without_overwriting_existing_project(tmp_pa
     hook.write_text('{"custom":"keep existing hook"}\n')
     assert init_project(project) == 0
     assert json.loads(hook.read_text()) == {"custom": "keep existing hook"}
+
+
+
+def test_missing_hook_events_mean_no_observed_agent_for_legacy_checkpoint():
+    # Role checkpoints existed before hooks were introduced and acquire the
+    # list only when subagentStart is actually received.
+    assert hooks.stopped_agent_id({}) is None
+    assert hooks.stopped_agent_id({"before": {"head_sha": "abc"}}) is None
+    assert hooks.stopped_agent_id({"hook_events": []}) is None
+
+
+@pytest.mark.parametrize("invalid", [None, (), "[]", {}, 12])
+def test_present_malformed_hook_ledger_is_still_rejected(invalid):
+    # No fallback may silently downgrade corrupted evidence to "no hook".
+    with pytest.raises(IssueExecutionError, match="malformed Copilot hook ledger"):
+        hooks.stopped_agent_id({"hook_events": invalid})
