@@ -332,6 +332,10 @@ def test_real_fake_copilot_process_and_same_session_resume(controlled_issue, mon
     )
     fake.chmod(0o700)
     monkeypatch.setenv("PATH", str(bindir) + os.pathsep + os.environ["PATH"])
+    # Legacy request billing, then an explicit switch to AI credits on
+    # resume of the SAME persisted parent Copilot session.
+    monkeypatch.setenv("COPILOT_BILLING_MODE", "legacy_premium_requests")
+    monkeypatch.delenv("COPILOT_MAX_AI_CREDITS", raising=False)
     from task_harness import issue_preflight
     monkeypatch.setattr(
         issue_preflight, "_remote_head",
@@ -352,6 +356,9 @@ def test_real_fake_copilot_process_and_same_session_resume(controlled_issue, mon
     session = first["session_id"]
     logged_args = __import__("json").loads(Path(first["log"]).read_text())
     assert f"--session-id={session}" in logged_args
+    assert not any(arg.startswith("--max-ai-credits=") for arg in logged_args)
+    assert first["billing_policy"]["unit"] == "PREMIUM_REQUESTS"
+    assert first["billing_policy"]["provider_usage_verified"] is False
 
     # A restarted parent process must not discard earlier delegated-role
     # evidence from the SAME parent Copilot session.
@@ -359,6 +366,8 @@ def test_real_fake_copilot_process_and_same_session_resume(controlled_issue, mon
         ledger = execution._load(state_path)
         ledger["role_checkpoint"] = {"test_marker": "preserved"}
         execution._save(state_path, ledger)
+    monkeypatch.setenv("COPILOT_BILLING_MODE", "ai_credits")
+    monkeypatch.setenv("COPILOT_MAX_AI_CREDITS", "30")
     second = execution.issue_run(root, 1, execute=True, resume=True)
     assert second["role_checkpoint"] == {"test_marker": "preserved"}
     assert second["status"] == "SESSION_EXITED"
@@ -368,4 +377,7 @@ def test_real_fake_copilot_process_and_same_session_resume(controlled_issue, mon
     assert second["run_id"] != first["run_id"]
     args = __import__("json").loads(Path(second["log"]).read_text())
     assert f"--session-id={session}" in args
+    assert "--max-ai-credits=30" in args
+    assert second["billing_policy"]["unit"] == "AI_CREDITS"
+    assert second["billing_policy"]["provider_usage_verified"] is False
     assert Path(first["log"]).exists()  # Previous run transcript preserved.
