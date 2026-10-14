@@ -178,3 +178,33 @@ def test_automatic_driver_has_hard_role_invocation_limit():
         drive_pipeline(state,transport=role,git=git,quality=Quality(),max_roles=2)
     assert role.invoked==2
     assert state.phase is PipelinePhase.INDEPENDENT_TEST
+
+
+def test_test_engineer_cannot_modify_existing_production_file():
+    git=GitFixture()
+    state=PipelineState.start(repository="tiroq/agent-harness",issue=1,pr=2,
+                              head_sha=BASE,diff_sha=DIFF)
+    git.current=GitObservation(BASE,DIFF,("src/a.py",),None,(),(("src/a.py","aaa"),))
+    role=RoleFixture(git)
+    run_one_role(state,transport=role,git=git,run_id="implement")
+    run_one_role(state,transport=role,git=git,run_id="review")
+    role.next=GitObservation(BASE,MODIFIED,("src/a.py",),None,(),(("src/a.py","bbb"),))
+    with pytest.raises(PipelineError,match="non-test source"):
+        run_one_role(state,transport=role,git=git,run_id="test")
+    assert state.phase is PipelinePhase.INDEPENDENT_TEST
+    assert state.pending is not None
+
+
+def test_test_engineer_can_add_test_file_but_requires_new_review():
+    git=GitFixture()
+    state=PipelineState.start(repository="tiroq/agent-harness",issue=1,pr=2,
+                              head_sha=BASE,diff_sha=DIFF)
+    git.current=GitObservation(BASE,DIFF,("src/a.py",),None,(),(("src/a.py","aaa"),))
+    role=RoleFixture(git)
+    run_one_role(state,transport=role,git=git,run_id="implement")
+    run_one_role(state,transport=role,git=git,run_id="review")
+    role.next=GitObservation(
+        BASE,MODIFIED,("src/a.py","tests/test_a.py"),None,(),
+        (("src/a.py","aaa"),("tests/test_a.py","new")),
+    )
+    assert run_one_role(state,transport=role,git=git,run_id="test") is PipelinePhase.REVIEW
