@@ -115,7 +115,10 @@ class PipelineState:
     def expected_role(self) -> DeliveryRole | None:
         return _PHASE_ROLE.get(self.phase)
 
-    def request(self, *, run_id: str, session_id: str, head_sha: str, diff_sha: str) -> RoleTicket:
+    def request(
+        self, *, run_id: str, session_id: str, head_sha: str,
+        diff_sha: str, quality: tuple[PrerequisiteCheck, ...] = (),
+    ) -> RoleTicket:
         role = self.expected_role()
         if role is None or self.pending is not None:
             raise PipelineError("pipeline phase not ready for new independent role")
@@ -123,6 +126,16 @@ class PipelineState:
             raise PipelineError("role run ID and unique session ID are required")
         if head_sha != self.current_head_sha or diff_sha != self.revision_diff_sha:
             raise PipelineError("worktree changed since accepted delivery revision")
+        if self.phase is PipelinePhase.PRE_COMMIT_AUDIT:
+            # Do not spend a premium auditor call when a mandatory gate
+            # is already FAIL or UNKNOWN; require explicit fresh evidence.
+            if not quality or any(
+                check.mandatory and check.status is not PrerequisiteStatus.PASS
+                for check in quality
+            ):
+                raise PipelineError("mandatory quality prerequisite red/unknown before auditor")
+            if not decide_pre_audit_gate(quality).should_invoke_auditor:
+                raise PipelineError("known-red quality prerequisite before auditor")
         ticket = RoleTicket(
             phase=self.phase, role=role, run_id=run_id, session_id=session_id,
             head_sha=head_sha, diff_sha=diff_sha, epoch=self.epoch,
