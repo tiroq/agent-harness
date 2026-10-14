@@ -70,6 +70,28 @@ def run_one_role(
     )
     reply = transport.invoke(ticket)
     after = git.observe()
+    return accept_role_checkpoint(
+        state, ticket=ticket, reply=reply, before=before, after=after,
+        quality=quality,
+    )
+
+
+def accept_role_checkpoint(
+    state: PipelineState,
+    *,
+    ticket: RoleTicket,
+    reply: RoleReply,
+    before: GitObservation,
+    after: GitObservation,
+    quality: tuple[PrerequisiteCheck, ...] = (),
+) -> PipelinePhase:
+    """Validate an existing internal-subagent report without launching an agent.
+
+    The caller must acquire trusted subagent invocation identity separately;
+    ROLE/AGENT_SESSION_ID claims in report text alone do not authenticate it.
+    """
+    if state.pending != ticket:
+        raise PipelineError("role ticket no longer owns the pending phase")
     if ticket.phase is PipelinePhase.INDEPENDENT_TEST:
         previous = dict(before.path_fingerprints)
         current = dict(after.path_fingerprints)
