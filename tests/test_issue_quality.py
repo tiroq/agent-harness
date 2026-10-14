@@ -134,7 +134,7 @@ def test_quality_gate_argv_is_literal_and_sanitizes_internal_env(ready, monkeypa
     # Rewrite committed gate as a script that rejects inherited control flags.
     gate.write_text(
         "#!/usr/bin/env bash\n"
-        "if [ -n \"\${COPILOT_AUTOPILOT_AUTHORITATIVE_RUNNER:-}\" ]; then exit 7; fi\n"
+        "if [ -n \"${COPILOT_AUTOPILOT_AUTHORITATIVE_RUNNER:-}\" ]; then exit 7; fi\n"
         "exit 0\n"
     )
     _git(wt, "add", "scripts/quality-gate.sh")
