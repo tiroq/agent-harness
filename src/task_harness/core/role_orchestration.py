@@ -28,6 +28,7 @@ class GitObservation:
     changed_paths: tuple[str, ...] = ()
     parent_sha: str | None = None
     commit_paths: tuple[str, ...] = ()
+    path_fingerprints: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +70,15 @@ def run_one_role(
     )
     reply = transport.invoke(ticket)
     after = git.observe()
+    if ticket.phase is PipelinePhase.INDEPENDENT_TEST:
+        previous = dict(before.path_fingerprints)
+        current = dict(after.path_fingerprints)
+        for path in set(previous) | set(current):
+            if previous.get(path) != current.get(path) and not (
+                path.startswith("tests/") or path.startswith("test/")
+                or path.split("/")[-1].startswith("test_")
+            ):
+                raise PipelineError("test engineer changed non-test source path")
     if ticket.phase is PipelinePhase.PRE_COMMIT_AUDIT:
         if not reply.approved_paths:
             raise PipelineError("auditor did not approve commit paths")
@@ -165,8 +175,17 @@ class LocalGitEvidence:
             name.decode("utf-8", errors="surrogateescape")
             for name in changed_commit.split(bytes([0])) if name
         ))
+        path_fingerprints = []
+        for name in sorted(paths):
+            path = self.worktree / name
+            if path.is_symlink():
+                raise PipelineError("symlink in worktree evidence requires manual review")
+            if path.is_file():
+                path_fingerprints.append((name, hashlib.sha256(path.read_bytes()).hexdigest()))
+            else:
+                path_fingerprints.append((name, "DELETED"))
         return GitObservation(
             head_sha=head, diff_sha=diff_sha,
             changed_paths=tuple(sorted(paths)), parent_sha=parent,
-            commit_paths=commit_paths,
+            commit_paths=commit_paths, path_fingerprints=tuple(path_fingerprints),
         )
