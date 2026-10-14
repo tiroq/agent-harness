@@ -108,7 +108,11 @@ def ingest_hook_event(
 
 def stopped_agent_id(role_data: dict[str, Any]) -> str | None:
     """Latest matching hook ID, or None when no hook was recorded."""
-    records = role_data.get("hook_events", ())
+    # Older/current role checkpoints have no hook_events key until the first
+    # actual Copilot hook arrives. Absence is not corruption: it means there
+    # is no independently observed subagentStop. An explicitly present
+    # non-list value (including None) remains malformed and must fail closed.
+    records = role_data.get("hook_events", [])
     if not isinstance(records, list):
         raise IssueExecutionError("malformed Copilot hook ledger")
     stops = [r for r in records if isinstance(r, dict) and r.get("kind") == "subagentStop"]
