@@ -354,8 +354,8 @@ The probe creates a throwaway Git repository with a custom
 commands, opts in to repo hooks in noninteractive `-p` mode via
 `GITHUB_COPILOT_PROMPT_MODE_REPO_HOOKS=true`, and asks the coordinator to
 delegate once. It denies shell/write/URL tools and builtin MCP, limits the
-available tool set to `task`, uses a soft per-response
-`--max-ai-credits=2` limit and an outer process-group timeout. This is
+available tool set to `task`, uses the documented minimum soft session cap
+`--max-ai-credits=30` (actual usage may be lower; an in-flight response may exceed the cap) and an outer process-group timeout. This is
 not an absolute spend ceiling: invoking the parent and worker can consume
 more than one model call. Neither BrandForge nor agent-harness Issue
 worktrees/ledgers/PRs are modified.
@@ -372,6 +372,16 @@ stderr; `copilot-output.log` captures the full subprocess output even when
 the terminal doesn't show it. Do not post this raw file publicly without
 redacting sensitive content. After diagnosing, remove it manually with a
 specific explicit path (never a broad `rm -rf /tmp/*`).
+
+The first real Copilot CLI 1.0.96 probe attempt on `tsrv` at old SHA
+`5523a64a` exited with code 1 and **zero** hook events. Its private diagnostic
+log was preserved as `/tmp/ah-subagent-hook-probe-l03zg7eo/copilot-output.log`.
+The exact failure cause is **unverified until that log is read**. One known
+configuration issue was `--max-ai-credits=2`: GitHub's published minimum
+soft limit is **30**, so this diagnostic now uses `30`. Before spending
+more credits, inspect the earlier log locally (redact tokens), verify
+`copilot --help` for CLI option compatibility, and rerun offline tests.
+If the previous failure was unrelated, do not assume the new value fixes it.
 
 If the probe returns FAIL, report its JSON verdict and diagnostic tail.
 Do not start the real Issue executor or call its `--execute` on the
