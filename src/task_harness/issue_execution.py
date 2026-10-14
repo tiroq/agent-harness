@@ -325,6 +325,7 @@ def issue_run(
                         "HARNESS_ROOT": str(root.resolve()),
                         "HARNESS_RUN_ID": run_id,
                         "HARNESS_PARENT_SESSION_ID": session_id,
+                        "ISSUE_NUMBER": str(issue),
                     },
                 )
             start = _proc_start(process.pid)
