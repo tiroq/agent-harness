@@ -214,12 +214,19 @@ class LocalGitEvidence:
             for name in changed_commit.split(bytes([0])) if name
         ))
         path_fingerprints = []
+        file_bytes = 0
         for name in sorted(paths):
             path = self.worktree / name
             if path.is_symlink():
                 raise PipelineError("symlink in worktree evidence requires manual review")
             if path.is_file():
+                size = path.stat().st_size
+                file_bytes += size
+                if file_bytes > self.max_bytes:
+                    raise PipelineError("modified file evidence exceeds configured bound")
                 path_fingerprints.append((name, hashlib.sha256(path.read_bytes()).hexdigest()))
+            elif path.exists():
+                raise PipelineError("non-regular changed path requires manual review")
             else:
                 path_fingerprints.append((name, "DELETED"))
         return GitObservation(
