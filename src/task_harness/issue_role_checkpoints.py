@@ -18,7 +18,7 @@ from typing import Any
 from .core.delivery_pipeline import (
     PipelineError, PipelinePhase, PipelineState, PipelineVerdict, RoleTicket,
 )
-from .core.models import RoleReport
+from .core.models import RoleReport, PrerequisiteCheck, PrerequisiteStatus
 from .core.role_orchestration import (
     GitObservation, LocalGitEvidence, RoleReply, accept_role_checkpoint,
 )
@@ -194,10 +194,24 @@ def role_begin(
                 raise IssueExecutionError("role checkpoint identity mismatch")
             if state.pending is not None or role_data.get("before") is not None:
                 raise IssueExecutionError("unfinished subagent checkpoint; cannot issue second ticket")
+        quality = ()
+        verified_quality = None
+        if state.phase == PipelinePhase.PRE_COMMIT_AUDIT:
+            verified_quality = role_data.get("quality") if isinstance(role_data, dict) else None
+            if not isinstance(verified_quality, dict) or not (
+                verified_quality.get("status") == "PASS"
+                and verified_quality.get("run_id") == run_id
+                and verified_quality.get("parent_session_id") == parent_session_id
+                and verified_quality.get("head_sha") == observed.head_sha
+                and verified_quality.get("diff_sha") == observed.diff_sha
+                and verified_quality.get("git_unchanged") is True
+            ):
+                raise IssueExecutionError("mandatory quality evidence absent, red or stale before auditor")
+            quality = (PrerequisiteCheck("committed_quality_gate", PrerequisiteStatus.PASS),)
         try:
             ticket = state.request(
                 run_id=run_id, session_id=ticket_id,
-                head_sha=observed.head_sha, diff_sha=observed.diff_sha,
+                head_sha=observed.head_sha, diff_sha=observed.diff_sha, quality=quality,
             )
         except PipelineError as exc:
             raise IssueExecutionError(f"role checkpoint blocked: {exc}") from exc
@@ -206,6 +220,7 @@ def role_begin(
             "before": _observation_to_dict(observed),
             "identity_source": "ORCHESTRATOR_ASSERTED_UNVERIFIED",
             "subagent_unbound": unbound,
+            "quality": verified_quality,
             "last_change": _clock(),
         }
         _save(path, ledger)
@@ -261,12 +276,25 @@ def role_complete(
             if observed_agent_id is not None else "ORCHESTRATOR_ASSERTED_UNVERIFIED"
         )
         observed = _git(ledger, root, issue)
+        quality = ()
+        if ticket.phase == PipelinePhase.PRE_COMMIT_AUDIT:
+            q = role_data.get("quality")
+            if not isinstance(q, dict) or not (
+                q.get("status") == "PASS"
+                and q.get("head_sha") == observed.head_sha
+                and q.get("diff_sha") == observed.diff_sha
+                and q.get("run_id") == run_id
+                and q.get("parent_session_id") == parent_session_id
+                and q.get("git_unchanged") is True
+            ):
+                raise IssueExecutionError("mandatory quality evidence missing or changed during audit")
+            quality = (PrerequisiteCheck("committed_quality_gate", PrerequisiteStatus.PASS),)
         try:
             phase = accept_role_checkpoint(
                 state, ticket=ticket, reply=RoleReply(
                     report=role_report, verdict=verdict, approved_paths=paths,
                 ),
-                before=before, after=observed,
+                before=before, after=observed, quality=quality,
             )
         except PipelineError as exc:
             raise IssueExecutionError(f"subagent checkpoint rejected: {exc}") from exc
@@ -275,6 +303,7 @@ def role_complete(
             "identity_source": source,
             "last_report_sha256": report_sha,
             "last_hook_agent_id": observed_agent_id,
+            "last_quality": role_data.get("quality"),
             "last_change": _clock(),
         }
         _save(path, ledger)
