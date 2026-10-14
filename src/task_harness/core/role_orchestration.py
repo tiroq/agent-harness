@@ -170,7 +170,9 @@ class LocalGitEvidence:
         untracked = self._git("ls-files", "--others", "--exclude-standard", "-z").split(b"\x00")
         digest = hashlib.sha256()
         digest.update(raw_diff)
-        paths_raw = self._git("status", "--porcelain=v1", "-z")
+        # By default, Git collapses untracked trees into directory entries.
+        # Expand them to file-level paths for trustworthy evidence and auditing.
+        paths_raw = self._git("status", "--porcelain=v1", "-z", "--untracked-files=all")
         paths = set()
         records = paths_raw.split(b"\x00")
         i = 0
