@@ -100,7 +100,8 @@ def test_probe_failure_retains_private_cli_diagnostics(tmp_path):
     fake.chmod(0o700)
     env = {**os.environ, "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"]}
     result = subprocess.run(
-        [sys.executable, str(PROBE), "--live", "--timeout-sec", "15"],
+        [sys.executable, str(PROBE), "--live", "--billing-mode", "ai_credits",
+         "--timeout-sec", "15"],
         cwd=tmp_path, env=env, capture_output=True, text=True,
         timeout=20, check=False,
     )
