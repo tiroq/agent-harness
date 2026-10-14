@@ -316,6 +316,57 @@ def role_complete(
         }
 
 
+def role_reconcile(
+    root: Path, issue: int, *, run_id: str, parent_session_id: str,
+) -> dict[str, Any]:
+    """Explicitly abandon an old pending subagent only if Git evidence is unchanged.
+
+    The same parent Copilot UUID may resume with a new run ID. Never invent
+    a successful report or silently retry a role that changed the worktree.
+    """
+    with _guard(root, issue) as path:
+        ledger = _parent(_load(path), issue=issue, run_id=run_id, session_id=parent_session_id)
+        info = ledger.get("role_checkpoint")
+        if info is None:
+            return {"issue": issue, "recovery": "NO_ROLE_EVIDENCE", "pr_ready": False}
+        state = _checkpoint_state(info)
+        ticket = state.pending
+        if ticket is None:
+            return {"issue": issue, "recovery": "NOT_NEEDED", "phase": state.phase.value, "pr_ready": False}
+        if ticket.run_id == run_id:
+            return {"issue": issue, "recovery": "BLOCKED_ROLE_STILL_IN_CURRENT_RUN", "pr_ready": False}
+        if ledger.get("previous_run_id") != ticket.run_id:
+            return {"issue": issue, "recovery": "BLOCKED_RUN_ANCESTRY_UNKNOWN", "pr_ready": False}
+        if not isinstance(info, dict) or info.get("quality_pending") is not None:
+            return {"issue": issue, "recovery": "BLOCKED_QUALITY_PROCESS_UNKNOWN", "pr_ready": False}
+        baseline = _observation_from_dict(info.get("before"))
+        now = _git(ledger, root, issue)
+        if now != baseline:
+            return {
+                "issue": issue, "recovery": "BLOCKED_UNVERIFIED_ROLE_CHANGES",
+                "phase": state.phase.value, "pr_ready": False,
+            }
+        state.pending = None
+        history = ledger.setdefault("role_recovery", [])
+        if not isinstance(history, list) or len(history) >= 12:
+            raise IssueExecutionError("bounded role recovery history overflow")
+        history.append({
+            "abandoned_old_run": ticket.run_id, "phase": ticket.phase.value,
+            "old_subagent_ticket": ticket.session_id, "at": _clock(),
+            "reason": "exact parent session resumed; old role had no Git changes",
+        })
+        ledger["role_checkpoint"] = {
+            "pipeline": _snapshot(state), "before": None,
+            "identity_source": "ORCHESTRATOR_ASSERTED_UNVERIFIED",
+            "last_change": _clock(),
+        }
+        _save(path, ledger)
+        return {
+            "issue": issue, "recovery": "RETRY_SAME_ROLE_ALLOWED",
+            "phase": state.phase.value, "pr_ready": False,
+        }
+
+
 def role_status(root: Path, issue: int) -> dict[str, Any]:
     """Read-only view; never promotes a self-reported role to GitHub-ready."""
     path = root.resolve() / ".copilot-workflow" / "issue-runs" / f"issue-{issue}.json"
