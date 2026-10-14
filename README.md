@@ -256,20 +256,59 @@ The checkpoint survives `issue-resume` of the parent process. A stranded
 pending checkpoint remains blocked rather than being silently promoted
 or dropped.
 
-**Trust boundary:** the current Copilot CLI orchestration exposes internal
-subagent identity to the orchestrator, but these CLI checkpoint commands
-receive that identity from the *orchestrator's input*, not an authenticated
-tool event stream. They mark every checkpoint
-`ORCHESTRATOR_ASSERTED_UNVERIFIED`; model report text or the claimed
-subagent handle can establish consistency, **not independent authenticity**.
-No checkpoint can make a PR READY, mark an Issue DONE, or authorize a merge.
-If Copilot does not expose an actual subagent handle even after
-the task returns, do not invent one: report a provenance blocker. Always
-capture the pre-change Git snapshot before delegating. The quality prerequisite contract is also fail-closed:
-`issue-role-begin` cannot invoke pre-commit audit without a trusted
-configured quality-check input, which is not yet wired. Adding a trusted
-Copilot tool event source and mandatory external quality-check provenance is
-the next integration gate.
+**Trust boundary:** the orchestrator's asserted internal agent handle is
+`ORCHESTRATOR_ASSERTED_UNVERIFIED`. The new project Copilot CLI hooks
+(`.github/hooks/task-harness.json`) also observe `subagentStart` and
+`subagentStop`. The latter carries `agentId`, `agentName`, `sessionId`
+and the full final response. The recorder retains only bounded metadata
+and a response hash, not the full (potentially sensitive) output.
+`issue-role-complete` rejects contradictions between a recorded hook
+agent ID, a submitted role report and the pending ticket; a matching event
+is labeled `COPILOT_HOOK_OBSERVED_UNATTESTED`. Hooks are runtime
+observations, **not cryptographic proof**: Copilot may disable hooks, hook
+handlers can fail open, and code in the same worktree/process may spoof a
+payload. A missing event leaves the lower-trust asserted-only verdict.
+Neither level is remote PR-ready/merge authority. If Copilot supplies no
+real subagent handle, do not invent one. Pre-change snapshots must precede
+the internal `task` invocation.
+
+Before launching the **pre-commit evidence auditor**, the parent orchestrator
+must run the fixed committed repository gate:
+
+```bash
+python3 -m task_harness.cli issue-quality-check \
+  --root "$HARNESS_ROOT" --issue "$ISSUE_NUMBER" \
+  --run-id "$HARNESS_RUN_ID" \
+  --parent-session-id "$HARNESS_PARENT_SESSION_ID"
+```
+
+This executes only the unchanged committed
+`scripts/quality-gate.sh` with a bounded timeout, sanitized internal
+one-hop environment flags, and a Git HEAD/diff snapshot. The command
+cannot take an arbitrary shell command from the model, and cannot forge a
+PASS when the script is missing, altered, times out, returns nonzero, or
+mutates tracked/untracked Git evidence. Both `issue-role-begin` and
+`issue-role-complete` recheck exact HEAD/diff provenance. This is a
+**local committed-script quality check**, NOT exact-head GitHub Actions
+or required-check readiness. A target repo must explicitly have a trusted
+`scripts/quality-gate.sh` committed before the pre-audit role is possible.
+No weak fallback that treats an absent check as PASS is supported.
+
+An interrupted role checkpoint is preserved across parent
+`issue-resume`. In a **new** active parent run with the same Copilot UUID,
+`issue-role-reconcile --root "$HARNESS_ROOT" --issue "$ISSUE_NUMBER"
+--run-id "$HARNESS_RUN_ID" --parent-session-id "$HARNESS_PARENT_SESSION_ID"`
+can permit the same role to be retried only when the previous-run ancestry
+matches and the complete Git snapshot is unchanged. An old role that changed
+HEAD/diff/files remains BLOCKED pending manual evidence recovery rather than
+being silently reset. It never launches another Copilot CLI process.
+
+Installable project templates now include the optional, guarded Copilot
+hooks under `templates/hooks`; `task-harness init` copies them without
+overwriting existing project files. Hook event handling remains inert if
+`HARNESS_RUN_ID` is absent. See the [official Copilot hooks reference]
+(https://docs.github.com/en/copilot/reference/hooks-reference) for the
+`subagentStart/subagentStop` payloads.
 
 The earlier `RoleTransport`/`drive_pipeline` remains a standalone
 **hermetic test abstraction**, not a production instruction to launch
