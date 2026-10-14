@@ -118,3 +118,16 @@ def test_probe_failure_retains_private_cli_diagnostics(tmp_path):
         assert (folder / ".github" / "hooks" / "probe.json").exists()
     finally:
         shutil.rmtree(folder)
+
+
+
+def test_live_cli_uses_supported_soft_credit_limit_and_bounded_toolset():
+    probe = _module()
+    import inspect
+    source = inspect.getsource(probe.run_copilot)
+    assert '"--max-ai-credits=30"' in source
+    assert '"--max-ai-credits=2"' not in source
+    assert '"--available-tools=task"' in source
+    assert '"--deny-tool=shell"' in source
+    assert '"--deny-tool=write"' in source
+    assert '"--disable-builtin-mcps"' in source
