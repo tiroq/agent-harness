@@ -315,6 +315,70 @@ The earlier `RoleTransport`/`drive_pipeline` remains a standalone
 multiple Copilot subprocesses. The production source of internal role
 delegation remains the one Copilot orchestrator.
 
+## GitHub Copilot billing compatibility (legacy requests vs AI credits)
+
+GitHub changed its individual Copilot billing on **June 1, 2026** from
+request-based allowances to model/token-priced **GitHub AI Credits**.
+Existing annual Copilot Pro/Pro+ subscribers can remain on **legacy premium
+request billing until that annual subscription expires**. An expired
+legacy annual plan is **not** automatically converted to a new paid
+AI-credit subscription: GitHub says it is downgraded to Copilot Free
+unless the account owner separately changes the subscription.
+
+The two billing units are **not interchangeable**:
+
+- `legacy_premium_requests`: user prompts incur request units with a
+  model-specific multiplier. Per GitHub's October 2026 legacy table,
+  GPT-5.3-Codex has multiplier **6×**. Internal tool calls and autonomous
+  subagent actions are not automatically individual premium requests.
+  There is no trustworthy premium-request hard cap flag exposed by the
+  existing CLI runner, and the Harness does **not** pretend role invocation
+  counts are premium-request usage. Check actual quota on GitHub Billing.
+- `ai_credits`: cost depends on model and input/output/cache tokens.
+  The Copilot CLI `--max-ai-credits=N` session limit is **soft**, may be
+  exceeded by one ongoing response, and must be at least **30 credits**.
+  Setting the limit to 30 does **not** mean spending 30 credits.
+
+Choose the mode explicitly in the environment of the existing
+`task-harness issue-run --execute` / `issue-resume --execute` or
+`task-harness run` process. No subscription secrets are required:
+
+```bash
+# Existing annual Copilot Pro/Pro+ subscription on legacy request billing:
+export COPILOT_BILLING_MODE=legacy_premium_requests
+unset COPILOT_MAX_AI_CREDITS
+
+# AFTER verifying the GitHub account has switched to AI-credit billing:
+export COPILOT_BILLING_MODE=ai_credits
+export COPILOT_MAX_AI_CREDITS=90 # optional; 30 minimum, soft per CLI session
+```
+
+The same shared `core/copilot_cli.py` policy applies to package and
+Issue execution. The Issue execution ledger records the selected mode,
+billing unit, and soft cap. **This is launch policy metadata, not actual
+GitHub consumption**: `provider_usage_verified=false` until a real
+account usage source is integrated. It does not invent token counts,
+request balances, charges, or automatic quota resets. Missing
+`COPILOT_BILLING_MODE` preserves the old `unconfigured` CLI behavior
+(no cap, no claim of an identified billing plan); for budget-sensitive
+runs, explicitly select a mode before `--execute`. Incompatible
+`COPILOT_MAX_AI_CREDITS` with legacy or unconfigured modes and
+credit limits below 30 are rejected before a live session is launched.
+
+When the user's legacy annual subscription ends (the account owner must
+verify the **exact** date in GitHub Billing), switch the explicit setting
+only after verifying a new paid plan or available Free allowance.
+The same parent Copilot UUID remains the unit of continuation; a new
+attempt records its own current billing configuration without rewriting
+past run accounting. There is **no calendar-derived automatic upgrade,
+fallback to a paid plan, or conversion of Requests into Credits**.
+
+References:
+- https://docs.github.com/en/copilot/reference/copilot-billing/request-based-billing-legacy/what-changed-with-billing
+- https://docs.github.com/en/copilot/reference/copilot-billing/request-based-billing-legacy/copilot-requests
+- https://docs.github.com/en/copilot/concepts/billing-and-usage/individuals/billing
+- https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli/set-session-limit
+
 ## Controlled real Copilot subagent hook probe
 
 To test delivery of `subagentStart` and `subagentStop` from the **installed
@@ -336,9 +400,14 @@ printf 'dry_run_exit=%s\\n' "$?"
 copilot --version
 printf 'version_exit=%s\\n' "$?"
 
-# ONE isolated Copilot CLI invocation with one requested internal custom
-# subagent and only the task tool available. This MAY consume AI credits:
-python3 scripts/probe-copilot-subagent-hooks.py --live --timeout-sec 120
+# ONE isolated CLI invocation, using the ACTUAL subscription billing mode.
+# Legacy annual Premium Requests (no AI-credit session cap):
+python3 scripts/probe-copilot-subagent-hooks.py --live \
+  --billing-mode legacy_premium_requests --timeout-sec 120
+
+# AI-credit plan alternative (soft CLI session cap of 30):
+# python3 scripts/probe-copilot-subagent-hooks.py --live \
+#   --billing-mode ai_credits --timeout-sec 120
 printf 'live_probe_exit=%s\\n' "$?"
 ```
 
@@ -354,8 +423,11 @@ The probe creates a throwaway Git repository with a custom
 commands, opts in to repo hooks in noninteractive `-p` mode via
 `GITHUB_COPILOT_PROMPT_MODE_REPO_HOOKS=true`, and asks the coordinator to
 delegate once. It denies shell/write/URL tools and builtin MCP, limits the
-available tool set to `task`, uses the documented minimum soft session cap
-`--max-ai-credits=30` (actual usage may be lower; an in-flight response may exceed the cap) and an outer process-group timeout. This is
+available tool set to `task`, and uses an outer process-group
+timeout. In **AI-credit mode only** it applies the documented minimum
+`--max-ai-credits=30` soft session cap; in **legacy premium-request mode**
+it omits that unrelated flag. In either mode actual billed usage depends on
+the account plan and cannot be treated as a zero-cost dry-run. This is
 not an absolute spend ceiling: invoking the parent and worker can consume
 more than one model call. Neither BrandForge nor agent-harness Issue
 worktrees/ledgers/PRs are modified.
@@ -376,12 +448,14 @@ specific explicit path (never a broad `rm -rf /tmp/*`).
 The first real Copilot CLI 1.0.96 probe attempt on `tsrv` at old SHA
 `5523a64a` exited with code 1 and **zero** hook events. Its private diagnostic
 log was preserved as `/tmp/ah-subagent-hook-probe-l03zg7eo/copilot-output.log`.
-The exact failure cause is **unverified until that log is read**. One known
-configuration issue was `--max-ai-credits=2`: GitHub's published minimum
-soft limit is **30**, so this diagnostic now uses `30`. Before spending
-more credits, inspect the earlier log locally (redact tokens), verify
-`copilot --help` for CLI option compatibility, and rerun offline tests.
-If the previous failure was unrelated, do not assume the new value fixes it.
+The operator then supplied its **confirmed** CLI error:
+`Invalid value for --max-ai-credits: "2". Use at least 30 AI credits.`
+Thus Copilot rejected the CLI invocation **before** any subagent could
+start; the zero hook events from that run are not a hook-delivery failure.
+The probe now requires explicit `--billing-mode` for `--live`: either
+omit the unrelated AI-credit flag for legacy billing, or use the supported
+30-credit minimum in AI-credit mode. Neither variation has yet been
+confirmed by another real Copilot CLI run.
 
 If the probe returns FAIL, report its JSON verdict and diagnostic tail.
 Do not start the real Issue executor or call its `--execute` on the
