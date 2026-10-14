@@ -9,7 +9,7 @@ import pytest
 from task_harness.core.delivery_pipeline import PipelineError, PipelinePhase, PipelineState, PipelineVerdict
 from task_harness.core.models import PrerequisiteCheck, PrerequisiteStatus, RoleReport
 from task_harness.core.role_orchestration import (
-    GitObservation, LocalGitEvidence, RoleReply, run_one_role,
+    GitObservation, LocalGitEvidence, RoleReply, drive_pipeline, run_one_role,
 )
 
 BASE = "a" * 40
@@ -135,3 +135,46 @@ def test_real_hermetic_git_observation_tracks_untracked_diff_and_commit(tmp_path
     assert after.changed_paths==()
     assert after.parent_sha==first.head_sha
     assert after.commit_paths==("src/a.py", "tests/test_a.py")
+
+
+def test_automatic_independent_role_driver_stops_at_local_audited():
+    git=GitFixture()
+    state=PipelineState.start(repository="tiroq/agent-harness",issue=1,pr=2,
+                              head_sha=BASE,diff_sha=DIFF)
+    class AutomaticTransport:
+        roles=[]
+        def invoke(self,ticket):
+            self.roles.append((ticket.role.value,ticket.session_id))
+            if ticket.phase is PipelinePhase.COMMIT:
+                git.current=GitObservation(COMMIT,"",(),BASE,("src/a.py",))
+            return RoleReply(
+                RoleReport(ticket.role.value,ticket.role.value,ticket.session_id),
+                PipelineVerdict.PASS,
+                approved_paths=("src/a.py",) if ticket.phase is PipelinePhase.PRE_COMMIT_AUDIT else (),
+            )
+    class Quality:
+        calls=0
+        def checks(self):
+            self.calls+=1
+            return GREEN
+    runner=AutomaticTransport()
+    quality=Quality()
+    assert drive_pipeline(state,transport=runner,git=git,quality=quality,max_roles=6) is PipelinePhase.LOCAL_AUDITED
+    assert len(runner.roles)==6
+    assert len({session for _,session in runner.roles})==6
+    assert quality.calls==1
+    assert state.local_audited
+
+
+def test_automatic_driver_has_hard_role_invocation_limit():
+    git=GitFixture()
+    role=RoleFixture(git)
+    state=PipelineState.start(repository="tiroq/agent-harness",issue=1,pr=2,
+                              head_sha=BASE,diff_sha=DIFF)
+    class Quality:
+        def checks(self):
+            return GREEN
+    with pytest.raises(PipelineError,match="limit reached"):
+        drive_pipeline(state,transport=role,git=git,quality=Quality(),max_roles=2)
+    assert role.invoked==2
+    assert state.phase is PipelinePhase.INDEPENDENT_TEST
