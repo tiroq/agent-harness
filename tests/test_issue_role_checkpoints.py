@@ -196,3 +196,59 @@ def test_malformed_checkpoint_ledger_fails_closed(parent):
         _save(path, ledger)
     with pytest.raises(IssueExecutionError, match="corrupt role checkpoint"):
         checks.role_status(root, 1)
+
+
+def test_synchronous_copilot_task_binds_subagent_after_prechange_snapshot(parent):
+    root, artifacts, observed = parent
+    # No subagent handle exists before the synchronous Copilot task returns.
+    opened = checks.role_begin(root, 1, run_id=RUN, parent_session_id=PARENT)
+    assert opened["subagent_id"] is None
+    assert opened["binding"] == "AWAITING_TASK_RESULT"
+    assert opened["role"] == "implementer"
+    observed[0] = GitObservation(HEAD, DIFF, ("src/a.py",))
+    result = checks.role_complete(
+        root, 1, run_id=RUN, parent_session_id=PARENT,
+        report=_report(artifacts, session="subagent-implementer-001"),
+        subagent_id="subagent-implementer-001",
+    )
+    assert result["phase"] == "REVIEW"
+    assert result["pr_ready"] is False
+    assert checks.role_status(root, 1)["accepted_roles"] == 1
+
+
+def test_unbound_role_rejects_missing_or_reused_actual_subagent_id(parent):
+    root, artifacts, observed = parent
+    checks.role_begin(root, 1, run_id=RUN, parent_session_id=PARENT)
+    observed[0] = GitObservation(HEAD, DIFF, ("src/a.py",))
+    report = _report(artifacts)
+    with pytest.raises(IssueExecutionError, match="actual Copilot subagent ID"):
+        checks.role_complete(root, 1, run_id=RUN, parent_session_id=PARENT, report=report)
+    assert checks.role_status(root, 1)["accepted_roles"] == 0
+    checks.role_complete(
+        root, 1, run_id=RUN, parent_session_id=PARENT, report=report,
+        subagent_id="subagent-implementer-001",
+    )
+    checks.role_begin(root, 1, run_id=RUN, parent_session_id=PARENT)
+    with pytest.raises(IssueExecutionError, match="actual Copilot subagent ID"):
+        checks.role_complete(
+            root, 1, run_id=RUN, parent_session_id=PARENT,
+            report=_report(
+                artifacts, name="reviewer.md", role="reviewer",
+                session="subagent-implementer-001",
+            ),
+            subagent_id="subagent-implementer-001",
+        )
+    assert checks.role_status(root, 1)["accepted_roles"] == 1
+
+
+def test_explicit_task_handle_must_match_bound_checkpoint(parent):
+    root, artifacts, observed = parent
+    checks.role_begin(root, 1, run_id=RUN, parent_session_id=PARENT,
+                      subagent_id="subagent-implementer-001")
+    observed[0] = GitObservation(HEAD, DIFF, ("src/a.py",))
+    with pytest.raises(IssueExecutionError, match="differs"):
+        checks.role_complete(
+            root, 1, run_id=RUN, parent_session_id=PARENT,
+            report=_report(artifacts), subagent_id="subagent-other-999",
+        )
+    assert checks.role_status(root, 1)["accepted_roles"] == 0
