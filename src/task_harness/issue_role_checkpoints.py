@@ -249,6 +249,17 @@ def role_complete(
             state.pending = ticket
         elif subagent_id is not None and subagent_id != ticket.session_id:
             raise IssueExecutionError("subagent ID differs from original checkpoint binding")
+        # A Copilot CLI command-hook observation binds the *actual* subagent
+        # ID to the model-supplied role report. It is stronger operational
+        # evidence than text alone, but is not a secure remote attestation.
+        from .issue_subagent_hooks import stopped_agent_id
+        observed_agent_id = stopped_agent_id(role_data)
+        if observed_agent_id is not None and observed_agent_id != ticket.session_id:
+            raise IssueExecutionError("Copilot subagentStop ID does not match role checkpoint")
+        source = (
+            "COPILOT_HOOK_OBSERVED_UNATTESTED"
+            if observed_agent_id is not None else "ORCHESTRATOR_ASSERTED_UNVERIFIED"
+        )
         observed = _git(ledger, root, issue)
         try:
             phase = accept_role_checkpoint(
@@ -261,15 +272,17 @@ def role_complete(
             raise IssueExecutionError(f"subagent checkpoint rejected: {exc}") from exc
         ledger["role_checkpoint"] = {
             "pipeline": _snapshot(state), "before": None,
-            "identity_source": "ORCHESTRATOR_ASSERTED_UNVERIFIED",
-            "last_report_sha256": report_sha, "last_change": _clock(),
+            "identity_source": source,
+            "last_report_sha256": report_sha,
+            "last_hook_agent_id": observed_agent_id,
+            "last_change": _clock(),
         }
         _save(path, ledger)
         return {
             "run_id": run_id, "completed_role": ticket.role.value,
             "subagent_id": ticket.session_id,
             "phase": phase.value, "report_sha256": report_sha,
-            "identity_source": "ORCHESTRATOR_ASSERTED_UNVERIFIED",
+            "identity_source": source,
             "pr_ready": False,
         }
 
@@ -292,6 +305,6 @@ def role_status(root: Path, issue: int) -> dict[str, Any]:
         "pending_role": state.expected_role().value if state.pending and state.expected_role() else None,
         "accepted_roles": len(state.history),
         "role_invocations": state.usage,
-        "identity_source": "ORCHESTRATOR_ASSERTED_UNVERIFIED",
+        "identity_source": info.get("identity_source", "ORCHESTRATOR_ASSERTED_UNVERIFIED"),
         "pr_ready": False,
     }
