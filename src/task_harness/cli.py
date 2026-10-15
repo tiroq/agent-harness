@@ -193,6 +193,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--issue", type=int, help="GitHub Issue number for issue-preflight")
     parser.add_argument("--expected-head", help="Expected 40-character PR head SHA")
     parser.add_argument("--execute", action="store_true", help="Explicitly launch a Copilot Issue session")
+    parser.add_argument(
+        "--approved-project-hook", action="append", default=[],
+        metavar="FILE.json=GIT_BLOB_SHA",
+        help="Operator-approved extra project hook content; repeat for each exact Git blob.",
+    )
     parser.add_argument("--run-id", help="Existing parent Issue run ID")
     parser.add_argument("--parent-session-id", help="Parent Copilot session UUID")
     parser.add_argument("--subagent-id", help="Copilot task/read_agent returned internal subagent ID")
@@ -303,6 +308,16 @@ def main(argv: list[str] | None = None) -> int:
                 parser.error(f"{args.command} --execute requires --repo and --expected-head")
         try:
             if args.command in {"issue-run", "issue-resume"}:
+                approvals: dict[str, str] = {}
+                for item in args.approved_project_hook:
+                    if "=" not in item:
+                        raise IssueExecutionError(
+                            "--approved-project-hook requires FILE.json=GIT_BLOB_SHA"
+                        )
+                    name, sha = item.split("=", 1)
+                    if name in approvals:
+                        raise IssueExecutionError("duplicate approved project hook name")
+                    approvals[name] = sha
                 status = issue_run(
                     root,
                     args.issue,
@@ -311,6 +326,7 @@ def main(argv: list[str] | None = None) -> int:
                     model=args.model,
                     execute=args.execute,
                     resume=args.command == "issue-resume",
+                    approved_extra_hook_blobs=approvals,
                 )
             elif args.command == "issue-status":
                 status = issue_status(root, args.issue)
