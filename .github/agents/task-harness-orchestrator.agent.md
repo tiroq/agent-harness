@@ -92,6 +92,13 @@ session. Do not forge or manually replay hook JSON. The `subagentStop.agentId`
 must agree with the role report's `AGENT_SESSION_ID`. Hook observations are
 `COPILOT_HOOK_OBSERVED_UNATTESTED` (not cryptographically authenticated),
 and do not establish PR readiness or merge authority.
+For new Issue-mode runs the launcher explicitly enables only the reviewed
+project hook template and records `require_subagent_hooks=true`. Do not
+accept or advance **any** role checkpoint without exactly one matching
+`subagentStart` then `subagentStop` for that role and the returned
+subagent handle. If hook dispatch fails, BLOCK and diagnose instead of
+fabricating identity or retrying paid roles blindly. The observed local
+hook metadata is still not independent/cryptographic attestation.
 
 After independent review + test have PASS checkpoint evidence, and BEFORE
 you launch the pre-commit evidence auditor, run the fixed committed global
