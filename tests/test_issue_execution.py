@@ -466,7 +466,7 @@ def test_approval_name_validation_fail_closed(controlled_issue, bad_name):
 def test_approved_hook_symlink_and_extra_unknown_file_are_rejected(controlled_issue):
     root, wt, _ = controlled_issue
     directory = wt / ".github" / "hooks"
-    real = directory / "real.txt"
+    real = root / "real.txt"
     real.write_text("hook")
     additional = directory / "recorder.json"
     additional.symlink_to(real)
