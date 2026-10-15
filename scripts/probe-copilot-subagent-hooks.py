@@ -142,6 +142,62 @@ def summarize(events: list[dict], exit_code: int | None) -> dict:
     }
 
 
+
+def preflight_copilot(billing_mode: str) -> dict[str, object]:
+    """Inspect installed CLI without starting a model session or trusting billing inference."""
+    if billing_mode not in {"legacy_premium_requests", "ai_credits"}:
+        raise ValueError("actual Copilot billing mode must be explicit")
+    executable = shutil.which("copilot")
+    if executable is None:
+        return {"verdict": "BLOCKED", "reason": "COPILOT_NOT_INSTALLED", "model_executed": False}
+    env = dict(os.environ)
+    env["COPILOT_AUTO_UPDATE"] = "false"
+    outputs = {}
+    for option in ("--version", "--help"):
+        try:
+            completed = subprocess.run(
+                [executable, option], stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, errors="replace", env=env, timeout=15, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return {
+                "verdict": "BLOCKED",
+                "reason": "CLI_PREFLIGHT_" + type(exc).__name__.upper(),
+                "model_executed": False,
+            }
+        if completed.returncode != 0:
+            return {
+                "verdict": "BLOCKED",
+                "reason": "CLI_" + option.removeprefix("--").upper() + "_FAILED",
+                "cli_exit_code": completed.returncode,
+                "model_executed": False,
+            }
+        outputs[option] = completed.stdout
+    required = (
+        "--agent", "--model", "--available-tools", "--deny-tool",
+        "--disable-builtin-mcps", "--no-ask-user", "--no-auto-update",
+    )
+    if billing_mode == "ai_credits":
+        required += ("--max-ai-credits",)
+    unavailable = [option for option in required if option not in outputs["--help"]]
+    if unavailable:
+        return {
+            "verdict": "BLOCKED",
+            "reason": "CLI_FLAGS_UNVERIFIED",
+            "missing_flags": unavailable,
+            "model_executed": False,
+        }
+    return {
+        "verdict": "PASS",
+        "billing_mode": billing_mode,
+        "cli_version": outputs["--version"].strip().splitlines()[0][:120]
+        if outputs["--version"].strip() else "unknown",
+        "model_executed": False,
+        "usage_verified": False,
+    }
+
+
 def run_copilot(
     root: Path, *, model: str, timeout_sec: int, billing_mode: str,
 ) -> tuple[int | None, bool]:
@@ -204,6 +260,8 @@ def run_copilot(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--preflight", action="store_true",
+                        help="Verify installed Copilot CLI options without a model request")
     parser.add_argument("--live", action="store_true",
                         help="Opt in to ONE real Copilot model request (may use paid AI credits)")
     parser.add_argument("--model", default="gpt-5.3-codex")
@@ -217,14 +275,17 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not 10 <= args.timeout_sec <= 180:
         parser.error("timeout must be between 10 and 180 seconds")
-    if args.live and args.billing_mode is None:
+    if (args.live or args.preflight) and args.billing_mode is None:
         parser.error(
-            "--live requires --billing-mode legacy_premium_requests|ai_credits; "
+            "--live/--preflight requires --billing-mode "
+            "legacy_premium_requests|ai_credits; "
             "the CLI does not expose trustworthy subscription auto-detection"
         )
-    if args.live and shutil.which("copilot") is None:
-        print("BLOCKED: copilot executable is not installed/on PATH", file=sys.stderr)
-        return 4
+    if args.preflight or args.live:
+        preflight = preflight_copilot(args.billing_mode)
+        if args.preflight or preflight["verdict"] != "PASS":
+            print(json.dumps(preflight, indent=2, sort_keys=True))
+            return 0 if preflight["verdict"] == "PASS" else 4
     tmp = Path(tempfile.mkdtemp(prefix="ah-subagent-hook-probe-"))
     os.chmod(tmp, 0o700)
     preserve_artifacts = args.keep
