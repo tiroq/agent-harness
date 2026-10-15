@@ -396,9 +396,15 @@ set +e
 python3 scripts/probe-copilot-subagent-hooks.py
 printf 'dry_run_exit=%s\\n' "$?"
 
-# Diagnose the CLI version independently before any model call:
-copilot --version
-printf 'version_exit=%s\\n' "$?"
+# Zero-model preflight: checks installed CLI help/version and required
+# flags for the selected billing mode; blocks unsupported flags before --live.
+python3 scripts/probe-copilot-subagent-hooks.py --preflight \\
+  --billing-mode legacy_premium_requests
+printf 'preflight_exit=%s\\n' "$?"
+
+# Optional separate preflight after moving to AI Credits:
+# python3 scripts/probe-copilot-subagent-hooks.py --preflight \\
+#   --billing-mode ai_credits
 
 # ONE isolated CLI invocation, using the ACTUAL subscription billing mode.
 # Legacy annual Premium Requests (no AI-credit session cap):
@@ -417,6 +423,12 @@ interactive SSH shell**. That setting persists after the block finishes;
 shell itself, which looks like the terminal crashed. Use `set +e` before
 diagnosing, and never apply `set -e` globally for an interactive smoke test.
 For automated scripts that need it, use a separate `( set -e; ... )` subshell.
+
+The `--preflight` check launches only `copilot --version` and `copilot --help`
+with automatic updates disabled; it does **not** authenticate an account,
+confirm available quota, attest hook delivery, or guarantee a zero-cost
+future live run. It stops if the installed CLI does not advertise required
+flags, including `--max-ai-credits` in AI-credit mode.
 
 The probe creates a throwaway Git repository with a custom
 `hook-probe-coordinator` and `hook-probe-worker`, registers two project hook
