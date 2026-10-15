@@ -58,6 +58,12 @@ def _start_fake_parent(tmp_path: Path) -> tuple[Path, subprocess.Popen, int]:
     agent=worktree/".github"/"agents"/"task-harness-orchestrator.agent.md"
     agent.parent.mkdir(parents=True)
     agent.write_text("name: task-harness-orchestrator\n", encoding="utf-8")
+    from task_harness.cli import _template_root
+    hook_dir=worktree/".github"/"hooks"
+    hook_dir.mkdir(parents=True)
+    (hook_dir/"task-harness.json").write_bytes(
+        (_template_root()/"hooks"/"task-harness.json").read_bytes()
+    )
     binpath=tmp_path/"bin"
     binpath.mkdir()
     fake=binpath/"copilot"
