@@ -303,6 +303,8 @@ def issue_run(
                 raise IssueExecutionError("previous Copilot session ID is missing or invalid")
             if previous.get("model") and previous["model"] != model:
                 raise IssueExecutionError("resume model differs from recorded session model")
+            if previous.get("approved_extra_hook_blobs", {}) != (approved_extra_hook_blobs or {}):
+                raise IssueExecutionError("resume project hook approvals differ from original run")
             session_id = previous["session_id"]
         else:
             if previous is not None:
@@ -359,6 +361,7 @@ def issue_run(
             "model": model,
             "billing_policy": billing_policy.as_dict(),
             "require_subagent_hooks": True,
+            "approved_extra_hook_blobs": dict(approved_extra_hook_blobs or {}),
             "attempt": 1 if not previous else int(previous.get("attempt", 1)) + 1,
             "previous_run_id": None if not previous else previous["run_id"],
             "status": "STARTING",
