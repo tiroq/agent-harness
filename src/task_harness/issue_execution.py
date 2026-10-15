@@ -188,7 +188,7 @@ def _verify_issue_hook_config(
     approved = approved_extra_hook_blobs or {}
     for name, blob in approved.items():
         if (
-            not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.json", name)
+            not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.json", name)
             or name == "task-harness.json" or name in {".", ".."}
             or not isinstance(blob, str) or not re.fullmatch(r"[a-f0-9]{40}", blob)
         ):
@@ -213,7 +213,7 @@ def _verify_issue_hook_config(
         if file.is_symlink() or not file.is_file() or file.stat().st_size > 65536:
             raise IssueExecutionError(f"unsafe approved project hook config: {file.name}")
         raw = file.read_bytes()
-        blob_id = hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\\0" + raw).hexdigest()
+        blob_id = hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw).hexdigest()
         if blob_id != approved[file.name]:
             raise IssueExecutionError(f"approved project hook content changed: {file.name}")
         observed.add(file.name)
