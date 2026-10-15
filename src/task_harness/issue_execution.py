@@ -168,6 +168,31 @@ def _prompt(result: IssuePreflightResult, *, resume: bool = False) -> str:
     )
 
 
+def _verify_issue_hook_config(worktree: Path) -> None:
+    """Permit opt-in project hooks only when configuration matches our template.
+
+    Copilot runs repository hook commands as the operator: enabling project
+    hooks without checking the worktree would expand execution authority.
+    This is a deliberately narrow initial policy; separately review any
+    additional project hooks before supporting them.
+    """
+    from .cli import _template_root
+
+    hooks = worktree / ".github" / "hooks"
+    target = hooks / "task-harness.json"
+    expected = _template_root() / "hooks" / "task-harness.json"
+    if not hooks.is_dir() or hooks.is_symlink() or target.is_symlink() or not target.is_file():
+        raise IssueExecutionError("trusted task-harness project hooks are missing or unsafe")
+    if not expected.is_file() or expected.is_symlink():
+        raise IssueExecutionError("installed task-harness hook template is unavailable")
+    # The CLI opts in to ALL project hooks. Fail closed rather than running
+    # unknown commands from another config in the same hooks directory.
+    if any(file.name != "task-harness.json" for file in hooks.iterdir()):
+        raise IssueExecutionError("unreviewed project hooks prevent trusted Issue execution")
+    if target.read_bytes() != expected.read_bytes():
+        raise IssueExecutionError("project hook commands differ from trusted Harness template")
+
+
 def issue_run(
     root: Path,
     issue: int,
@@ -221,6 +246,9 @@ def issue_run(
         )
     if shutil.which("copilot") is None:
         raise IssueExecutionError("Copilot CLI missing; no Issue run started")
+    # Real Issue-mode subagent evidence requires opted-in, reviewed command
+    # hooks. Never allow a paid parent to run with silent/missing hook capture.
+    _verify_issue_hook_config(preflight.worktree)
     # Linux process birth identity is mandatory for safe cancel/dedup.
     if not _boot_id() or not Path("/proc/self/stat").is_file():
         raise IssueExecutionError("safe process identity requires Linux /proc")
@@ -298,6 +326,7 @@ def issue_run(
             "session_id": session_id,
             "model": model,
             "billing_policy": billing_policy.as_dict(),
+            "require_subagent_hooks": True,
             "attempt": 1 if not previous else int(previous.get("attempt", 1)) + 1,
             "previous_run_id": None if not previous else previous["run_id"],
             "status": "STARTING",
@@ -334,6 +363,7 @@ def issue_run(
                         "HARNESS_RUN_ID": run_id,
                         "HARNESS_PARENT_SESSION_ID": session_id,
                         "ISSUE_NUMBER": str(issue),
+                        "GITHUB_COPILOT_PROMPT_MODE_REPO_HOOKS": "true",
                         # Absolute harness source path is needed because
                         # Copilot command hooks run from the Issue worktree.
                         "PYTHONPATH": str(Path(__file__).resolve().parents[1])
