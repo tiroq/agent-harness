@@ -335,8 +335,11 @@ The two billing units are **not interchangeable**:
   existing CLI runner, and the Harness does **not** pretend role invocation
   counts are premium-request usage. Check actual quota on GitHub Billing.
 - `ai_credits`: cost depends on model and input/output/cache tokens.
-  The Copilot CLI `--max-ai-credits=N` session limit is **soft**, may be
-  exceeded by one ongoing response, and must be at least **30 credits**.
+  The Copilot CLI `--max-ai-credits=N` limit is **soft**, may be
+  exceeded by an ongoing response, and must be at least **30 credits**.
+  GitHub's session-limit guide and CLI option reference describe slightly
+  different response/task scopes; validate the installed version and never
+  treat this flag as an enforceable monthly, per-Issue or cumulative budget.
   Setting the limit to 30 does **not** mean spending 30 credits.
 
 Choose the mode explicitly in the environment of the existing
@@ -350,7 +353,7 @@ unset COPILOT_MAX_AI_CREDITS
 
 # AFTER verifying the GitHub account has switched to AI-credit billing:
 export COPILOT_BILLING_MODE=ai_credits
-export COPILOT_MAX_AI_CREDITS=90 # optional; 30 minimum, soft per CLI session
+export COPILOT_MAX_AI_CREDITS=90 # optional; 30 minimum, soft CLI guard (scope depends on mode)
 ```
 
 The same shared `core/copilot_cli.py` policy applies to package and
