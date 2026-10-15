@@ -422,3 +422,77 @@ def test_issue_execute_blocks_untrusted_hook_configs_before_copilot(
             expected_head=HEAD, execute=True,
         )
     assert not (root / ".copilot-workflow").exists()
+
+
+def _git_blob_sha(content: bytes) -> str:
+    import hashlib
+
+    return hashlib.sha1(
+        b"blob " + str(len(content)).encode("ascii") + b"\0" + content
+    ).hexdigest()
+
+
+def test_extra_project_hook_requires_exact_explicit_blob_approval(controlled_issue):
+    root, wt, _ = controlled_issue
+    additional = wt / ".github" / "hooks" / "recorder.json"
+    additional.write_bytes(b'{"version":1,"hooks":{"sessionEnd":[]}}\n')
+    sha = _git_blob_sha(additional.read_bytes())
+    with pytest.raises(execution.IssueExecutionError, match="unreviewed"):
+        execution._verify_issue_hook_config(wt)
+    execution._verify_issue_hook_config(
+        wt, approved_extra_hook_blobs={"recorder.json": sha},
+    )
+    additional.write_bytes(additional.read_bytes() + b" ")
+    with pytest.raises(execution.IssueExecutionError, match="content changed"):
+        execution._verify_issue_hook_config(
+            wt, approved_extra_hook_blobs={"recorder.json": sha},
+        )
+    additional.unlink()
+    with pytest.raises(execution.IssueExecutionError, match="missing"):
+        execution._verify_issue_hook_config(
+            wt, approved_extra_hook_blobs={"recorder.json": sha},
+        )
+
+
+@pytest.mark.parametrize("bad_name", ["../runner.json", "task-harness.json", "name.sh", ".hidden.json"])
+def test_approval_name_validation_fail_closed(controlled_issue, bad_name):
+    _, wt, _ = controlled_issue
+    with pytest.raises(execution.IssueExecutionError, match="invalid explicit"):
+        execution._verify_issue_hook_config(
+            wt, approved_extra_hook_blobs={bad_name: "a" * 40},
+        )
+
+
+def test_approved_hook_symlink_and_extra_unknown_file_are_rejected(controlled_issue):
+    root, wt, _ = controlled_issue
+    directory = wt / ".github" / "hooks"
+    real = directory / "real.txt"
+    real.write_text("hook")
+    additional = directory / "recorder.json"
+    additional.symlink_to(real)
+    with pytest.raises(execution.IssueExecutionError, match="unsafe approved"):
+        execution._verify_issue_hook_config(
+            wt, approved_extra_hook_blobs={"recorder.json": "a" * 40},
+        )
+    additional.unlink()
+    additional.write_text("safe")
+    (directory / "unexpected.json").write_text("x")
+    with pytest.raises(execution.IssueExecutionError, match="unreviewed"):
+        execution._verify_issue_hook_config(
+            wt, approved_extra_hook_blobs={
+                "recorder.json": _git_blob_sha(additional.read_bytes()),
+            },
+        )
+
+
+def test_cli_rejects_duplicate_or_malformed_extra_hook_approvals(controlled_issue, capsys):
+    from task_harness.cli import main
+
+    root, _, _ = controlled_issue
+    assert main(["issue-run", "--root", str(root), "--issue", "1",
+                 "--approved-project-hook", "bad-format"]) == 4
+    assert "FILE.json=GIT_BLOB_SHA" in capsys.readouterr().err
+    assert main(["issue-run", "--root", str(root), "--issue", "1",
+                 "--approved-project-hook", "a.json=" + "a" * 40,
+                 "--approved-project-hook", "a.json=" + "b" * 40]) == 4
+    assert "duplicate" in capsys.readouterr().err
