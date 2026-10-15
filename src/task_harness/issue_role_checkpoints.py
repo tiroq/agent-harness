@@ -269,6 +269,26 @@ def role_complete(
         # evidence than text alone, but is not a secure remote attestation.
         from .issue_subagent_hooks import stopped_agent_id
         observed_agent_id = stopped_agent_id(role_data)
+        if ledger.get("require_subagent_hooks") is True:
+            # Live Issue runs opt into reviewed project hooks. Every accepted
+            # role must match one ordered start+stop pair, not just auditor
+            # roles; otherwise a prompt-only report could bypass the gate.
+            records = role_data.get("hook_events")
+            expected_agent = "task-harness-" + ticket.role.value
+            if (
+                not isinstance(records, list) or len(records) != 2
+                or [entry.get("kind") for entry in records if isinstance(entry, dict)]
+                != ["subagentStart", "subagentStop"]
+                or any(
+                    not isinstance(entry, dict)
+                    or entry.get("agent_name") != expected_agent
+                    for entry in records
+                )
+                or observed_agent_id is None
+            ):
+                raise IssueExecutionError(
+                    "live subagent checkpoint requires matching Copilot start/stop hooks"
+                )
         if ticket.phase in {PipelinePhase.PRE_COMMIT_AUDIT, PipelinePhase.POST_COMMIT_AUDIT} and observed_agent_id is None:
             # Independent approval must not be granted solely by a fabricated
             # report/session ID if the configured runtime hook never fired.
