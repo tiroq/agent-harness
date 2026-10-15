@@ -28,7 +28,7 @@ def bound(tmp_path, monkeypatch):
             "issue": 1, "repo": "tiroq/agent-harness",
             "pr": 2, "head": HEAD, "worktree": str(wt),
             "run_id": ROOT_RUN, "session_id": PARENT,
-            "status": "RUNNING", "pid": 987, "boot_id": "fake", "pid_start": "fake",
+            "status": "RUNNING", "require_subagent_hooks": True, "pid": 987, "boot_id": "fake", "pid_start": "fake",
         })
     monkeypatch.setattr(checkpoints, "_same_process", lambda _: True)
     class FakeGit:
@@ -175,3 +175,62 @@ def test_present_malformed_hook_ledger_is_still_rejected(invalid):
     # No fallback may silently downgrade corrupted evidence to "no hook".
     with pytest.raises(IssueExecutionError, match="malformed Copilot hook ledger"):
         hooks.stopped_agent_id({"hook_events": invalid})
+
+
+@pytest.mark.parametrize("hook_count", [0, 1])
+def test_live_implementer_report_cannot_advance_without_both_hooks(bound, hook_count):
+    root, wt = bound
+    report = root / ".copilot-workflow" / "runs" / ROOT_RUN / "implementer.md"
+    report.write_text(
+        f"ROLE: implementer\\nGENERATED_BY_ROLE: implementer\\n"
+        f"AGENT_SESSION_ID: {AGENT}\\nVERDICT: PASS\\n",
+        encoding="utf-8",
+    )
+    if hook_count:
+        send(root, wt, "subagentStart")
+    with pytest.raises(IssueExecutionError, match="requires matching Copilot start/stop hooks"):
+        checkpoints.role_complete(
+            root, 1, run_id=ROOT_RUN, parent_session_id=PARENT,
+            report="implementer.md", subagent_id=AGENT,
+        )
+    assert checkpoints.role_status(root, 1)["accepted_roles"] == 0
+
+
+def test_live_reviewer_checkpoint_requires_fresh_pair_for_each_role(bound):
+    root, wt = bound
+    artifacts = root / ".copilot-workflow" / "runs" / ROOT_RUN
+    (artifacts / "implementer.md").write_text(
+        f"ROLE: implementer\\nGENERATED_BY_ROLE: implementer\\n"
+        f"AGENT_SESSION_ID: {AGENT}\\nVERDICT: PASS\\n",
+        encoding="utf-8",
+    )
+    send(root, wt, "subagentStart")
+    send(root, wt, "subagentStop")
+    checkpoints.role_complete(
+        root, 1, run_id=ROOT_RUN, parent_session_id=PARENT,
+        report="implementer.md", subagent_id=AGENT,
+    )
+    checkpoint = checkpoints.role_begin(
+        root, 1, run_id=ROOT_RUN, parent_session_id=PARENT,
+        subagent_id="subagent-reviewer-002",
+    )
+    assert checkpoint["role"] == "reviewer"
+    (artifacts / "reviewer.md").write_text(
+        "ROLE: reviewer\\nGENERATED_BY_ROLE: reviewer\\n"
+        "AGENT_SESSION_ID: subagent-reviewer-002\\nVERDICT: PASS\\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(IssueExecutionError, match="requires matching Copilot start/stop hooks"):
+        checkpoints.role_complete(
+            root, 1, run_id=ROOT_RUN, parent_session_id=PARENT,
+            report="reviewer.md", subagent_id="subagent-reviewer-002",
+        )
+    send(root, wt, "subagentStart", agent_name="task-harness-reviewer")
+    send(root, wt, "subagentStop", agent_name="task-harness-reviewer", agent_id="subagent-reviewer-002")
+    result = checkpoints.role_complete(
+        root, 1, run_id=ROOT_RUN, parent_session_id=PARENT,
+        report="reviewer.md", subagent_id="subagent-reviewer-002",
+    )
+    assert result["phase"] == "INDEPENDENT_TEST"
+    assert result["identity_source"] == "COPILOT_HOOK_OBSERVED_UNATTESTED"
+    assert checkpoints.role_status(root, 1)["accepted_roles"] == 2
