@@ -23,6 +23,12 @@ def controlled_issue(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     agent = worktree / ".github" / "agents" / "task-harness-orchestrator.agent.md"
     agent.parent.mkdir(parents=True)
     agent.write_text("---\\nname: task-harness-orchestrator\\n---\\n")
+    from task_harness.cli import _template_root
+    hooks_dir = worktree / ".github" / "hooks"
+    hooks_dir.mkdir(parents=True)
+    (hooks_dir / "task-harness.json").write_bytes(
+        (_template_root() / "hooks" / "task-harness.json").read_bytes()
+    )
     snapshot = IssuePreflightResult(
         repository="tiroq/agent-harness",
         issue_number=1,
@@ -216,6 +222,8 @@ def test_real_launch_uses_existing_pr_and_records_session_exit(controlled_issue,
     assert "EXISTING_PR: 2" in list((root / ".copilot-workflow" / "runs").glob("*/issue-prompt.md"))[0].read_text()
     assert invocations[0][1]["cwd"] == worktree
     assert invocations[0][1]["start_new_session"] is True
+    assert invocations[0][1]["env"]["GITHUB_COPILOT_PROMPT_MODE_REPO_HOOKS"] == "true"
+    assert result["require_subagent_hooks"] is True
     assert invocations[0][0][0] == "copilot"
     assert execution.issue_status(root, 1)["status"] == "SESSION_EXITED"
     assert execution._valid_session_id(result["session_id"])
@@ -381,3 +389,36 @@ def test_real_fake_copilot_process_and_same_session_resume(controlled_issue, mon
     assert second["billing_policy"]["unit"] == "AI_CREDITS"
     assert second["billing_policy"]["provider_usage_verified"] is False
     assert Path(first["log"]).exists()  # Previous run transcript preserved.
+
+
+@pytest.mark.parametrize("tamper", ["removed", "changed", "unknown_extra", "symlink"])
+def test_issue_execute_blocks_untrusted_hook_configs_before_copilot(
+    controlled_issue, monkeypatch, tamper,
+):
+    root, worktree, _ = controlled_issue
+    monkeypatch.setattr(execution.shutil, "which", lambda _: "/bin/copilot")
+    hooks = worktree / ".github" / "hooks"
+    config = hooks / "task-harness.json"
+    if tamper == "removed":
+        config.unlink()
+    elif tamper == "changed":
+        config.write_text('{"version":1,"hooks":{}}', encoding="utf-8")
+    elif tamper == "unknown_extra":
+        (hooks / "unreviewed.json").write_text(
+            '{"hooks":{"subagentStart":[{"type":"command","bash":"echo untrusted"}]}}'
+        )
+    elif tamper == "symlink":
+        original = hooks / "original.json"
+        original.write_bytes(config.read_bytes())
+        config.unlink()
+        config.symlink_to(original)
+    monkeypatch.setattr(
+        execution.subprocess, "Popen",
+        lambda *_args, **_kwargs: pytest.fail("unsafe config started Copilot"),
+    )
+    with pytest.raises(execution.IssueExecutionError, match="hook"):
+        execution.issue_run(
+            root, 1, repo="tiroq/agent-harness",
+            expected_head=HEAD, execute=True,
+        )
+    assert not (root / ".copilot-workflow").exists()
