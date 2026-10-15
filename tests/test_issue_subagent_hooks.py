@@ -182,8 +182,8 @@ def test_live_implementer_report_cannot_advance_without_both_hooks(bound, hook_c
     root, wt = bound
     report = root / ".copilot-workflow" / "runs" / ROOT_RUN / "implementer.md"
     report.write_text(
-        f"ROLE: implementer\\nGENERATED_BY_ROLE: implementer\\n"
-        f"AGENT_SESSION_ID: {AGENT}\\nVERDICT: PASS\\n",
+        f"ROLE: implementer\nGENERATED_BY_ROLE: implementer\n"
+        f"AGENT_SESSION_ID: {AGENT}\nVERDICT: PASS\n",
         encoding="utf-8",
     )
     if hook_count:
@@ -200,8 +200,8 @@ def test_live_reviewer_checkpoint_requires_fresh_pair_for_each_role(bound):
     root, wt = bound
     artifacts = root / ".copilot-workflow" / "runs" / ROOT_RUN
     (artifacts / "implementer.md").write_text(
-        f"ROLE: implementer\\nGENERATED_BY_ROLE: implementer\\n"
-        f"AGENT_SESSION_ID: {AGENT}\\nVERDICT: PASS\\n",
+        f"ROLE: implementer\nGENERATED_BY_ROLE: implementer\n"
+        f"AGENT_SESSION_ID: {AGENT}\nVERDICT: PASS\n",
         encoding="utf-8",
     )
     send(root, wt, "subagentStart")
@@ -216,8 +216,8 @@ def test_live_reviewer_checkpoint_requires_fresh_pair_for_each_role(bound):
     )
     assert checkpoint["role"] == "reviewer"
     (artifacts / "reviewer.md").write_text(
-        "ROLE: reviewer\\nGENERATED_BY_ROLE: reviewer\\n"
-        "AGENT_SESSION_ID: subagent-reviewer-002\\nVERDICT: PASS\\n",
+        "ROLE: reviewer\nGENERATED_BY_ROLE: reviewer\n"
+        "AGENT_SESSION_ID: subagent-reviewer-002\nVERDICT: PASS\n",
         encoding="utf-8",
     )
     with pytest.raises(IssueExecutionError, match="requires matching Copilot start/stop hooks"):
