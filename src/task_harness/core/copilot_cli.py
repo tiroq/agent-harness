@@ -91,5 +91,3 @@ def copilot_arguments(
     ):
         args.append(f"--deny-tool=shell({denied})")
     return args
-
-
