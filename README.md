@@ -267,10 +267,35 @@ agent ID, a submitted role report and the pending ticket; a matching event
 is labeled `COPILOT_HOOK_OBSERVED_UNATTESTED`. Hooks are runtime
 observations, **not cryptographic proof**: Copilot may disable hooks, hook
 handlers can fail open, and code in the same worktree/process may spoof a
-payload. A missing event leaves the lower-trust asserted-only verdict.
+payload. For new Issue runs, `issue-run --execute` validates that the worktree's
+`.github/hooks/task-harness.json` exactly matches the trusted installed
+template, refuses additional or symlinked project-hook configurations, and
+sets `GITHUB_COPILOT_PROMPT_MODE_REPO_HOOKS=true` on the **single**
+parent Copilot subprocess. Every new run records
+`require_subagent_hooks=true` in its existing Issue ledger. Under this
+policy, **all six role checkpoints** require an ordered, matching start/stop
+pair before accepting the role report; missing hooks block progression, not
+merely downgrade its evidence. Older manually created/legacy ledgers without
+this policy retain the historical partial-observation behavior for backward
+compatibility, but cannot be treated as current live acceptance evidence.
 Neither level is remote PR-ready/merge authority. If Copilot supplies no
 real subagent handle, do not invent one. Pre-change snapshots must precede
 the internal `task` invocation.
+
+The production parent validates the exact project-hook template because
+opting into repository hooks grants the hook commands local execution
+authority. A repository needing additional/custom hooks must undergo explicit
+policy/allowlist review before attempting live Issue delivery; do not disable
+this check or silently fall back to a hook-free live run.
+
+A hermetic integration test (`tests/test_issue_live_role_lifecycle.py`)
+now exercises the persisted Issue ledger across implementer, reviewer,
+test engineer, pre-commit auditor, committer, and post-commit auditor
+with simulated hook payloads, **real local Git snapshots/commit** and
+the fixed committed quality gate. It does not invoke Copilot, publish
+to GitHub, prove real Issue-mode hook transport, or yield `PR_READY`.
+The previously operator-confirmed live hook smoke only established
+isolated hook delivery, not the full role chain.
 
 Before launching the **pre-commit evidence auditor**, the parent orchestrator
 must run the fixed committed repository gate:
