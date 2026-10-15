@@ -59,6 +59,11 @@ def test_probe_fake_cli_emits_two_events_in_isolated_repository(tmp_path):
     fake = tmp_path / "copilot"
     fake.write_text(
         "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "if '--help' in sys.argv:\n"
+        "    print('--agent --model --available-tools --deny-tool --disable-builtin-mcps --no-ask-user --no-auto-update --max-ai-credits'); sys.exit(0)\n"
+        "if '--version' in sys.argv:\n"
+        "    print('1.0.96'); sys.exit(0)\n"
         "import json,subprocess\n"
         "common={'sessionId':'simulated-parent','cwd':__import__('os').getcwd(),"
         "'agentName':'hook-probe-worker'}\n"
@@ -92,6 +97,11 @@ def test_probe_failure_retains_private_cli_diagnostics(tmp_path):
     fake = tmp_path / "copilot"
     fake.write_text(
         "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "if '--help' in sys.argv:\n"
+        "    print('--agent --model --available-tools --deny-tool --disable-builtin-mcps --no-ask-user --no-auto-update --max-ai-credits'); sys.exit(0)\n"
+        "if '--version' in sys.argv:\n"
+        "    print('1.0.96'); sys.exit(0)\n"
         "import sys\n"
         "print('FAKE_COPILOT_UNSUPPORTED_OPTION', flush=True)\n"
         "sys.exit(2)\n",
@@ -163,6 +173,11 @@ def test_probe_legacy_mode_never_applies_ai_credit_flag(tmp_path):
     args_path = tmp_path / "args.json"
     fake.write_text(
         "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "if '--help' in sys.argv:\n"
+        "    print('--agent --model --available-tools --deny-tool --disable-builtin-mcps --no-ask-user --no-auto-update --max-ai-credits'); sys.exit(0)\n"
+        "if '--version' in sys.argv:\n"
+        "    print('1.0.96'); sys.exit(0)\n"
         "import json, os, sys, subprocess\n"
         "from pathlib import Path\n"
         f"Path({str(args_path)!r}).write_text(json.dumps(sys.argv[1:]))\n"
@@ -189,3 +204,66 @@ def test_probe_legacy_mode_never_applies_ai_credit_flag(tmp_path):
     assert json.loads(result.stdout)["verdict"] == "PASS"
     argv = json.loads(args_path.read_text())
     assert not any(s.startswith("--max-ai-credits") for s in argv)
+
+
+def test_preflight_checks_installed_cli_without_launching_model(tmp_path):
+    fake = tmp_path / "copilot"
+    sentinel = tmp_path / "model-requested"
+    fake.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "if '--help' in sys.argv:\n"
+        "    print('--agent --model --available-tools --deny-tool --disable-builtin-mcps --no-ask-user --no-auto-update --max-ai-credits'); sys.exit(0)\n"
+        "if '--version' in sys.argv:\n"
+        "    print('1.0.96'); sys.exit(0)\n"
+        f"open({str(sentinel)!r}, 'w').close()\n",
+        encoding="utf-8",
+    )
+    fake.chmod(0o700)
+    result = subprocess.run(
+        [sys.executable, str(PROBE), "--preflight", "--billing-mode", "ai_credits"],
+        env={**os.environ, "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"]},
+        capture_output=True, text=True, check=False, timeout=20,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["verdict"] == "PASS"
+    assert payload["cli_version"] == "1.0.96"
+    assert payload["model_executed"] is False
+    assert payload["usage_verified"] is False
+    assert not sentinel.exists()
+
+
+def test_preflight_blocks_missing_credit_cap_without_paid_cli_request(tmp_path):
+    fake = tmp_path / "copilot"
+    sentinel = tmp_path / "model-requested"
+    fake.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "if '--help' in sys.argv:\n"
+        "    print('--agent --model --available-tools --deny-tool --disable-builtin-mcps --no-ask-user --no-auto-update'); sys.exit(0)\n"
+        "if '--version' in sys.argv:\n"
+        "    print('1.0.50'); sys.exit(0)\n"
+        f"open({str(sentinel)!r}, 'w').close()\n",
+        encoding="utf-8",
+    )
+    fake.chmod(0o700)
+    env = {**os.environ, "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"]}
+    for mode, expected_code in (("ai_credits", 4), ("legacy_premium_requests", 0)):
+        result = subprocess.run(
+            [sys.executable, str(PROBE), "--preflight", "--billing-mode", mode],
+            env=env, capture_output=True, text=True, check=False, timeout=20,
+        )
+        assert result.returncode == expected_code, result.stderr
+        payload = json.loads(result.stdout)
+        assert payload["verdict"] == ("BLOCKED" if expected_code else "PASS")
+        if expected_code:
+            assert "--max-ai-credits" in payload["missing_flags"]
+        assert not sentinel.exists()
+    result = subprocess.run(
+        [sys.executable, str(PROBE), "--live", "--billing-mode", "ai_credits"],
+        env=env, capture_output=True, text=True, check=False, timeout=20,
+    )
+    assert result.returncode == 4
+    assert json.loads(result.stdout)["reason"] == "CLI_FLAGS_UNVERIFIED"
+    assert not sentinel.exists()
