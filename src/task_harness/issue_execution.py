@@ -168,15 +168,31 @@ def _prompt(result: IssuePreflightResult, *, resume: bool = False) -> str:
     )
 
 
-def _verify_issue_hook_config(worktree: Path) -> None:
-    """Permit opt-in project hooks only when configuration matches our template.
+def _verify_issue_hook_config(
+    worktree: Path, *,
+    approved_extra_hook_blobs: dict[str, str] | None = None,
+) -> None:
+    """Validate every project hook against an immutable operator-approved blob.
 
-    Copilot runs repository hook commands as the operator: enabling project
-    hooks without checking the worktree would expand execution authority.
-    This is a deliberately narrow initial policy; separately review any
-    additional project hooks before supporting them.
+    The *caller*, never repository content, must supply the optional mapping
+    of additional hook filenames to exact Git blob SHA-1 IDs. Git's blob
+    envelope includes the file length. No project-local file can self-approve
+    newly introduced shell commands. Unapproved names and altered files fail
+    before any paid Copilot session starts.
     """
+    import hashlib
+    import re
+
     from .cli import _template_root
+
+    approved = approved_extra_hook_blobs or {}
+    for name, blob in approved.items():
+        if (
+            not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.json", name)
+            or name == "task-harness.json" or name in {".", ".."}
+            or not isinstance(blob, str) or not re.fullmatch(r"[a-f0-9]{40}", blob)
+        ):
+            raise IssueExecutionError("invalid explicit project hook approval")
 
     hooks = worktree / ".github" / "hooks"
     target = hooks / "task-harness.json"
@@ -185,12 +201,24 @@ def _verify_issue_hook_config(worktree: Path) -> None:
         raise IssueExecutionError("trusted task-harness project hooks are missing or unsafe")
     if not expected.is_file() or expected.is_symlink():
         raise IssueExecutionError("installed task-harness hook template is unavailable")
-    # The CLI opts in to ALL project hooks. Fail closed rather than running
-    # unknown commands from another config in the same hooks directory.
-    if any(file.name != "task-harness.json" for file in hooks.iterdir()):
-        raise IssueExecutionError("unreviewed project hooks prevent trusted Issue execution")
     if target.read_bytes() != expected.read_bytes():
         raise IssueExecutionError("project hook commands differ from trusted Harness template")
+
+    observed: set[str] = set()
+    for file in hooks.iterdir():
+        if file.name == "task-harness.json":
+            continue
+        if file.name not in approved:
+            raise IssueExecutionError(f"unreviewed project hook config: {file.name}")
+        if file.is_symlink() or not file.is_file() or file.stat().st_size > 65536:
+            raise IssueExecutionError(f"unsafe approved project hook config: {file.name}")
+        raw = file.read_bytes()
+        blob_id = hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\\0" + raw).hexdigest()
+        if blob_id != approved[file.name]:
+            raise IssueExecutionError(f"approved project hook content changed: {file.name}")
+        observed.add(file.name)
+    if observed != set(approved):
+        raise IssueExecutionError("approved project hook config is missing")
 
 
 def issue_run(
@@ -202,6 +230,7 @@ def issue_run(
     model: str = "gpt-5.3-codex",
     execute: bool = False,
     resume: bool = False,
+    approved_extra_hook_blobs: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Explicit repo-owned execution; a resumed session retains its exact ID."""
     preflight = inspect_issue(
@@ -248,7 +277,10 @@ def issue_run(
         raise IssueExecutionError("Copilot CLI missing; no Issue run started")
     # Real Issue-mode subagent evidence requires opted-in, reviewed command
     # hooks. Never allow a paid parent to run with silent/missing hook capture.
-    _verify_issue_hook_config(preflight.worktree)
+    _verify_issue_hook_config(
+        preflight.worktree,
+        approved_extra_hook_blobs=approved_extra_hook_blobs,
+    )
     # Linux process birth identity is mandatory for safe cancel/dedup.
     if not _boot_id() or not Path("/proc/self/stat").is_file():
         raise IssueExecutionError("safe process identity requires Linux /proc")
