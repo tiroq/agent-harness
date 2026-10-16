@@ -571,8 +571,12 @@ def test_internal_subagent_manifests_are_invocable_and_mirrored():
     orchestrator = (
         _template_root() / "agents" / "task-harness-orchestrator.agent.md"
     ).read_text(encoding="utf-8")
-    assert orchestrator == (
+    host_orchestrator = (
         root / ".github" / "agents" / "task-harness-orchestrator.agent.md"
     ).read_text(encoding="utf-8")
-    assert "call `issue-role-begin` BEFORE any implementation" in orchestrator
-    assert "Do not edit production files or create a commit yourself." in orchestrator
+    # The host orchestrator intentionally exposes GitHub Issue-specific
+    # instructions and different picker visibility; compare safety invariants.
+    for profile in (orchestrator, host_orchestrator):
+        assert "call `issue-role-begin` BEFORE any implementation" in profile
+        assert "Do not edit production files or create a commit yourself." in profile
+        assert "tools: [read, search, execute, agent," in profile
