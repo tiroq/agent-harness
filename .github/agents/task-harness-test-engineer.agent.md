@@ -1,7 +1,7 @@
 ---
 name: task-harness-test-engineer
 description: Adds independent tests for one task and never changes production code.
-disable-model-invocation: true
+disable-model-invocation: false
 user-invocable: false
 tools: [read, search, create, edit, execute]
 ---

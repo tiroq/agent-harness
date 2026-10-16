@@ -1,7 +1,7 @@
 ---
 name: task-harness-committer
 description: Creates exactly one local commit after all delivery gates pass.
-disable-model-invocation: true
+disable-model-invocation: false
 user-invocable: false
 tools: [read, search, execute]
 ---

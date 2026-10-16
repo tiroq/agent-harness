@@ -1,7 +1,7 @@
 ---
 name: task-harness-implementer
 description: Implements one bounded task without committing.
-disable-model-invocation: true
+disable-model-invocation: false
 user-invocable: false
 tools: [read, search, create, edit, execute]
 ---

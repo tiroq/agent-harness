@@ -1,7 +1,7 @@
 ---
 name: task-harness-reviewer
 description: Independently reviews one task and its implementation without editing.
-disable-model-invocation: true
+disable-model-invocation: false
 user-invocable: false
 tools: [read, search, execute]
 ---

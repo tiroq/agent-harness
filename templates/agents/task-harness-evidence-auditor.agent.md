@@ -1,7 +1,7 @@
 ---
 name: task-harness-evidence-auditor
 description: Reconciles task claims, reports, commands, diff, and commit boundary.
-disable-model-invocation: true
+disable-model-invocation: false
 user-invocable: false
 tools: [read, search, execute]
 ---
