@@ -218,6 +218,10 @@ def test_real_launch_uses_existing_pr_and_records_session_exit(controlled_issue,
     assert result["pr"] == 2
     assert result["head"] == HEAD
     assert result["phase"] == "IMPLEMENTING"  # not PR_READY
+    assert result["delivery_verdict"] == "BLOCKED_NO_ROLE_EVIDENCE"
+    assert result["role_phase"] is None
+    assert result["accepted_roles"] == 0
+    assert result["pr_ready"] is False
     assert Path(result["log"]).read_bytes() == b"Copilot session output\n"
     assert "EXISTING_PR: 2" in list((root / ".copilot-workflow" / "runs").glob("*/issue-prompt.md"))[0].read_text()
     assert invocations[0][1]["cwd"] == worktree
@@ -496,3 +500,46 @@ def test_cli_rejects_duplicate_or_malformed_extra_hook_approvals(controlled_issu
                  "--approved-project-hook", "a.json=" + "a" * 40,
                  "--approved-project-hook", "a.json=" + "b" * 40]) == 4
     assert "duplicate" in capsys.readouterr().err
+
+
+def test_cli_real_run_must_fail_closed_on_zero_exit_without_role_evidence(
+    controlled_issue, monkeypatch, capsys,
+):
+    from task_harness.cli import main
+
+    root, _, _ = controlled_issue
+    monkeypatch.setattr(
+        execution, "issue_run",
+        lambda *_args, **_kwargs: {
+            "status": "SESSION_EXITED", "exit_code": 0,
+            "delivery_verdict": "BLOCKED_NO_ROLE_EVIDENCE",
+            "pr_ready": False,
+        },
+    )
+    assert main([
+        "issue-run", "--root", str(root), "--issue", "1",
+        "--repo", "tiroq/agent-harness", "--expected-head", HEAD,
+        "--model", "gpt-5-mini", "--execute",
+    ]) == 4
+    output = capsys.readouterr().out
+    assert '"delivery_verdict": "BLOCKED_NO_ROLE_EVIDENCE"' in output
+    assert '"pr_ready": false' in output
+
+
+def test_observability_explicitly_separates_parent_phase_from_local_role_evidence(
+    controlled_issue,
+):
+    root, _, _ = controlled_issue
+    with execution._guard(root, 1) as path:
+        execution._save(path, {
+            "run_id": "run-1", "issue": 1,
+            "status": "SESSION_EXITED", "exit_code": 0,
+            "phase": "IMPLEMENTING",
+        })
+    result = execution.issue_status(root, 1)
+    assert result["phase"] == "IMPLEMENTING"
+    assert result["delivery_verdict"] == "BLOCKED_NO_ROLE_EVIDENCE"
+    assert result["role_phase"] is None
+    assert result["accepted_roles"] == 0
+    assert result["pending_role"] is None
+    assert result["pr_ready"] is False
