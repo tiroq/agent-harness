@@ -7,6 +7,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+from task_harness.issue_preflight import IssuePreflightError, inspect_issue
+from task_harness.core.copilot_cli import copilot_arguments
+
 STATUSES = {"pending", "in_progress", "partial", "done", "blocked", "failed", "obsolete", "archived"}
 
 
@@ -105,12 +108,7 @@ def run_task(root: Path, source: str, model: str, dry_run: bool, allow_all: bool
             status_file.write_text("\n".join(updated) + "\n", encoding="utf-8")
     prompt = _prompt(root, source or ".scratch", run_id, model)
     (artifact / "launch-request.txt").write_text(prompt, encoding="utf-8")
-    args = ["copilot", "--agent=task-harness-orchestrator", "--model", model, "--autopilot",
-            f"--max-autopilot-continues={os.getenv('COPILOT_MAX_AUTOPILOT_CONTINUES', '100')}"]
-    if allow_all:
-        args.append("--allow-all-tools")
-    for denied in ("git push", "git merge", "git rebase", "git reset", "git clean", "git checkout", "git switch", "rm -rf", "sudo", "su", "chown", "chmod -R", "pip install", "uv pip install", "npm install"):
-        args.append(f"--deny-tool=shell({denied})")
+    args = copilot_arguments(model=model, allow_all=allow_all)
     print(f"RUN_ID: {run_id}\nARTIFACT_DIR: {artifact}\nMODEL: {model}\nSOURCE: {source or '.scratch'}")
     if dry_run:
         print("DRY_RUN: Copilot was not started.")
@@ -149,6 +147,13 @@ def init_project(root: Path) -> int:
         target.parent.mkdir(parents=True, exist_ok=True)
         if not target.exists():
             target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    # Install repo-scoped Copilot hooks for internal subagent evidence.
+    # Existing hook configuration is never overwritten by project init.
+    for source in sorted((template_root / "hooks").glob("*.json")):
+        target = root / ".github" / "hooks" / source.name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if not target.exists():
+            target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
     policy = root / "harness.yaml.example"
     policy_source = Path(__file__).resolve().parents[2] / "harness.yaml.example"
     if not policy_source.exists():
@@ -183,8 +188,23 @@ def queue_tasks(root: Path, tasks_dir: str, model: str, limit: int | None, selec
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="task-harness")
-    parser.add_argument("command", choices=("init", "list", "run", "queue"))
+    parser.add_argument("command", choices=("init", "list", "run", "queue", "issue-preflight", "issue-run", "issue-resume", "issue-status", "issue-reconcile", "issue-cancel", "issue-role-begin", "issue-role-complete", "issue-role-status", "issue-hook-event", "issue-quality-check", "issue-role-reconcile"))
     parser.add_argument("--root", default=".")
+    parser.add_argument("--issue", type=int, help="GitHub Issue number for issue-preflight")
+    parser.add_argument("--expected-head", help="Expected 40-character PR head SHA")
+    parser.add_argument("--execute", action="store_true", help="Explicitly launch a Copilot Issue session")
+    parser.add_argument(
+        "--approved-project-hook", action="append", default=[],
+        metavar="FILE.json=GIT_BLOB_SHA",
+        help="Operator-approved extra project hook content; repeat for each exact Git blob.",
+    )
+    parser.add_argument("--run-id", help="Existing parent Issue run ID")
+    parser.add_argument("--parent-session-id", help="Parent Copilot session UUID")
+    parser.add_argument("--subagent-id", help="Copilot task/read_agent returned internal subagent ID")
+    parser.add_argument("--report", help="Report filename stored in owning run artifacts")
+    parser.add_argument("--hook-event", choices=("subagentStart", "subagentStop"), help="Copilot CLI hook event name")
+    parser.add_argument("--timeout-sec", type=int, default=180, help="Hard-capped local quality-gate timeout")
+    parser.add_argument("--repo", help="Expected GitHub owner/name for origin verification")
     parser.add_argument("--tasks-dir", default=".scratch")
     parser.add_argument("--source", default="")
     parser.add_argument("--model", default=os.getenv("COPILOT_MODEL", "gpt-5.3-codex"))
@@ -195,6 +215,170 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--select", action="store_true")
     args = parser.parse_args(argv)
     root = Path(args.root).resolve()
+    if args.command == "issue-quality-check":
+        if args.issue is None or not args.run_id or not args.parent_session_id:
+            parser.error("issue-quality-check requires --issue --run-id --parent-session-id")
+        from task_harness.issue_execution import IssueExecutionError
+        from task_harness.issue_quality import quality_check
+        try:
+            status = quality_check(
+                root, args.issue, run_id=args.run_id,
+                parent_session_id=args.parent_session_id,
+                timeout_sec=args.timeout_sec,
+            )
+        except (IssueExecutionError, OSError, ValueError) as exc:
+            print(f"BLOCKED: {exc}", file=sys.stderr)
+            return 4
+        import json
+        print(json.dumps(status, indent=2, sort_keys=True))
+        return 0 if status.get("status") == "PASS" else 4
+    if args.command == "issue-hook-event":
+        # This command is invoked by Copilot's hook runner, NOT the model.
+        # Hook stdout must be valid JSON without diagnostic chatter.
+        if args.issue is None or not args.run_id or not args.parent_session_id or not args.hook_event:
+            parser.error("issue-hook-event requires --issue --run-id --parent-session-id --hook-event")
+        from task_harness.issue_execution import IssueExecutionError
+        from task_harness.issue_subagent_hooks import ingest_hook_event, _MAX_HOOK_INPUT
+        try:
+            raw = sys.stdin.buffer.read(_MAX_HOOK_INPUT + 1)
+            ingest_hook_event(
+                root, args.issue, run_id=args.run_id,
+                parent_session_id=args.parent_session_id,
+                event_name=args.hook_event, raw=raw,
+            )
+        except (IssueExecutionError, OSError, ValueError) as exc:
+            print(f"BLOCKED HOOK: {exc}", file=sys.stderr)
+            return 4
+        print("{}")
+        return 0
+    if args.command in {"issue-role-begin", "issue-role-complete", "issue-role-status", "issue-role-reconcile"}:
+        if args.issue is None:
+            parser.error(f"{args.command} requires --issue")
+        from task_harness.issue_execution import IssueExecutionError
+        from task_harness.issue_role_checkpoints import (
+            role_begin, role_complete, role_status, role_reconcile,
+        )
+        try:
+            if args.command == "issue-role-status":
+                status = role_status(root, args.issue)
+            else:
+                if not args.run_id or not args.parent_session_id:
+                    parser.error(f"{args.command} requires --run-id and --parent-session-id")
+                if args.command == "issue-role-reconcile":
+                    status = role_reconcile(
+                        root, args.issue, run_id=args.run_id,
+                        parent_session_id=args.parent_session_id,
+                    )
+                elif args.command == "issue-role-begin":
+                    status = role_begin(
+                        root, args.issue, run_id=args.run_id,
+                        parent_session_id=args.parent_session_id,
+                        subagent_id=args.subagent_id,
+                    )
+                else:
+                    if not args.report:
+                        parser.error("issue-role-complete requires --report")
+                    status = role_complete(
+                        root, args.issue, run_id=args.run_id,
+                        parent_session_id=args.parent_session_id, report=args.report,
+                        subagent_id=args.subagent_id,
+                    )
+        except (IssueExecutionError, OSError, ValueError) as exc:
+            print(f"BLOCKED: {exc}", file=sys.stderr)
+            return 4
+        import json
+        print(json.dumps(status, indent=2, sort_keys=True, default=str))
+        if args.command == "issue-role-reconcile" and str(status.get("recovery", "")).startswith("BLOCKED_"):
+            return 4
+        return 0
+    if args.command in {"issue-run", "issue-resume", "issue-status", "issue-reconcile", "issue-cancel"}:
+        if args.issue is None:
+            parser.error(f"{args.command} requires --issue")
+        from task_harness.issue_execution import (
+            IssueExecutionError,
+            issue_cancel,
+            issue_run,
+            issue_reconcile,
+            issue_status,
+        )
+        if args.command in {"issue-run", "issue-resume"}:
+            if args.execute and args.dry_run:
+                parser.error("--execute and --dry-run are mutually exclusive")
+            if args.execute and (not args.repo or not args.expected_head):
+                parser.error(f"{args.command} --execute requires --repo and --expected-head")
+        try:
+            if args.command in {"issue-run", "issue-resume"}:
+                approvals: dict[str, str] = {}
+                for item in args.approved_project_hook:
+                    if "=" not in item:
+                        raise IssueExecutionError(
+                            "--approved-project-hook requires FILE.json=GIT_BLOB_SHA"
+                        )
+                    name, sha = item.split("=", 1)
+                    if name in approvals:
+                        raise IssueExecutionError("duplicate approved project hook name")
+                    approvals[name] = sha
+                status = issue_run(
+                    root,
+                    args.issue,
+                    repo=args.repo,
+                    expected_head=args.expected_head,
+                    model=args.model,
+                    execute=args.execute,
+                    resume=args.command == "issue-resume",
+                    approved_extra_hook_blobs=approvals,
+                )
+            elif args.command == "issue-status":
+                status = issue_status(root, args.issue)
+            elif args.command == "issue-reconcile":
+                status = issue_reconcile(root, args.issue)
+            else:
+                status = issue_cancel(root, args.issue)
+        except (IssuePreflightError, IssueExecutionError, OSError, ValueError) as exc:
+            print(f"BLOCKED: {exc}", file=sys.stderr)
+            return 4
+        import json
+        print(json.dumps(status, indent=2, sort_keys=True, default=str))
+        if args.command in {"issue-run", "issue-resume"} and args.execute:
+            if status.get("status") == "CANCELLED":
+                return 130
+            # A successful Copilot process may have bypassed all role gates.
+            # Never report issue-run success solely from exit_code=0.
+            if status.get("delivery_verdict") == "LOCAL_AUDITED_UNPUBLISHED":
+                return 0
+            if status.get("status") == "SESSION_EXITED":
+                return 4
+            return 1
+        if args.command in {"issue-run", "issue-resume"} and str(status.get("verdict", "")).startswith("BLOCKED_"):
+            return 4
+        if args.command == "issue-reconcile" and str(status.get("recovery", "")).startswith("BLOCKED_"):
+            return 4
+        return 0
+    if args.command == "issue-preflight":
+        if args.issue is None:
+            parser.error("issue-preflight requires --issue")
+        try:
+            result = inspect_issue(
+                root,
+                args.issue,
+                expected_head=args.expected_head,
+                expected_repo=args.repo,
+            )
+        except (IssuePreflightError, OSError, ValueError) as exc:
+            print(f"BLOCKED: {exc}", file=sys.stderr)
+            return 4
+        print(f"ISSUE_PREFLIGHT: PASS")
+        print(f"REPOSITORY: {result.repository}")
+        print(f"ISSUE: {result.issue_number}")
+        print(f"WORKTREE: {result.worktree}")
+        print(f"BRANCH: {result.branch}")
+        print(f"HEAD_SHA: {result.head_sha}")
+        print(f"MAIN_SHA: {result.main_sha}")
+        print(f"PR_NUMBER: {result.pr_number}")
+        print(f"ISSUE_COMMENTS_COUNT: {result.comment_count}")
+        print(f"ISSUE_COMMENTS_LATEST_ID: {result.latest_comment_id or 'none'}")
+        print("DRY_RUN: no Copilot, push, branch, PR or filesystem changes were made.")
+        return 0
     if args.command == "init":
         return init_project(root)
     if args.command == "list":

@@ -8,3 +8,4 @@ build/
 .copilot-workflow/cache/
 .copilot-workflow/runs/
 .copilot-workflow/logs/
+.copilot-workflow/issue-runs/
