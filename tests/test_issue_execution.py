@@ -543,3 +543,30 @@ def test_observability_explicitly_separates_parent_phase_from_local_role_evidenc
     assert result["accepted_roles"] == 0
     assert result["pending_role"] is None
     assert result["pr_ready"] is False
+
+
+def test_internal_subagent_manifests_are_invocable_and_mirrored():
+    """Workers must be callable by a parent, not selectable as top-level UI agents."""
+    from task_harness.cli import _template_root
+
+    root = Path(__file__).resolve().parents[1]
+    for role in (
+        "implementer", "reviewer", "test-engineer",
+        "evidence-auditor", "committer",
+    ):
+        name = f"task-harness-{role}.agent.md"
+        installed = (_template_root() / "agents" / name).read_text(encoding="utf-8")
+        checked_in = (root / ".github" / "agents" / name).read_text(encoding="utf-8")
+        assert installed == checked_in
+        header = installed.split("---", 2)[1]
+        assert "disable-model-invocation: false" in header, name
+        assert "user-invocable: false" in header, name
+
+    orchestrator = (
+        _template_root() / "agents" / "task-harness-orchestrator.agent.md"
+    ).read_text(encoding="utf-8")
+    assert orchestrator == (
+        root / ".github" / "agents" / "task-harness-orchestrator.agent.md"
+    ).read_text(encoding="utf-8")
+    assert "call `issue-role-begin` BEFORE any implementation" in orchestrator
+    assert "Do not edit production files or create a commit yourself." in orchestrator
