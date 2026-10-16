@@ -224,6 +224,12 @@ def test_real_launch_uses_existing_pr_and_records_session_exit(controlled_issue,
     assert result["pr_ready"] is False
     assert Path(result["log"]).read_bytes() == b"Copilot session output\n"
     assert "EXISTING_PR: 2" in list((root / ".copilot-workflow" / "runs").glob("*/issue-prompt.md"))[0].read_text()
+    assert "ISSUE_MODE_FAIL_CLOSED:" in list(
+        (root / ".copilot-workflow" / "runs").glob("*/issue-prompt.md")
+    )[0].read_text()
+    assert "parent must NEVER" in list(
+        (root / ".copilot-workflow" / "runs").glob("*/issue-prompt.md")
+    )[0].read_text()
     assert invocations[0][1]["cwd"] == worktree
     assert invocations[0][1]["start_new_session"] is True
     assert invocations[0][1]["env"]["GITHUB_COPILOT_PROMPT_MODE_REPO_HOOKS"] == "true"
