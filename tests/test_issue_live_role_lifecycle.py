@@ -190,3 +190,16 @@ def test_complete_six_role_flow_remains_local_audited_not_pr_ready(issue):
     assert ledger["session_id"] == PARENT
     assert ledger["status"] == "RUNNING"
     assert ledger["require_subagent_hooks"] is True
+    with _guard(root, 1) as path:
+        terminal = _load(path)
+        assert terminal is not None
+        terminal["status"] = "SESSION_EXITED"
+        terminal["exit_code"] = 0
+        _save(path, terminal)
+    from task_harness.issue_execution import issue_status
+    report = issue_status(root, 1)
+    assert report["role_phase"] == "LOCAL_AUDITED"
+    assert report["accepted_roles"] == 6
+    assert report["pending_role"] is None
+    assert report["delivery_verdict"] == "LOCAL_AUDITED_UNPUBLISHED"
+    assert report["pr_ready"] is False
