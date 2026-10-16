@@ -459,7 +459,51 @@ def issue_run(
             exit_code=result_code, updated_at=_clock(),
         )
         _save(path, current)
-    return current
+    return dict(current, **_delivery_evidence(current))
+
+
+def _delivery_evidence(state: dict[str, Any]) -> dict[str, Any]:
+    """Read-only role evidence summary; Copilot exit 0 is not a role verdict.
+
+    The top-level lifecycle phase describes parent process execution; only
+    validated typed checkpoints can establish LOCAL_AUDITED. This summary
+    never promotes local audit into remote PR publication/readiness.
+    """
+    result: dict[str, Any] = {
+        "delivery_verdict": "IN_PROGRESS_UNVERIFIED",
+        "role_phase": None,
+        "accepted_roles": 0,
+        "pending_role": None,
+        "pr_ready": False,
+    }
+    checkpoint = state.get("role_checkpoint")
+    if checkpoint is not None:
+        try:
+            from .issue_role_checkpoints import _checkpoint_state
+
+            role_state = _checkpoint_state(checkpoint)
+            result["role_phase"] = role_state.phase.value
+            result["accepted_roles"] = len(role_state.history)
+            if role_state.pending is not None:
+                result["pending_role"] = role_state.pending.role.value
+        except (IssueExecutionError, TypeError, AttributeError, KeyError):
+            result["delivery_verdict"] = "BLOCKED_CORRUPT_ROLE_EVIDENCE"
+            return result
+    if state.get("status") in _ACTIVE:
+        return result
+    if state.get("status") != "SESSION_EXITED" or state.get("exit_code") != 0:
+        result["delivery_verdict"] = "BLOCKED_SESSION_FAILED"
+    elif checkpoint is None:
+        result["delivery_verdict"] = "BLOCKED_NO_ROLE_EVIDENCE"
+    elif (
+        result["role_phase"] == "LOCAL_AUDITED"
+        and result["pending_role"] is None
+        and result["accepted_roles"] >= 6
+    ):
+        result["delivery_verdict"] = "LOCAL_AUDITED_UNPUBLISHED"
+    else:
+        result["delivery_verdict"] = "BLOCKED_ROLE_INCOMPLETE"
+    return result
 
 
 def issue_status(root: Path, issue: int) -> dict[str, Any]:
@@ -467,10 +511,10 @@ def issue_status(root: Path, issue: int) -> dict[str, Any]:
     current = _load(path)
     if current is None:
         return {"issue": issue, "status": "NOT_STARTED"}
+    result = dict(current, **_delivery_evidence(current))
     if _active_state(current):
-        current = dict(current)
-        current["process_identity"] = "LIVE" if _same_process(current) else "UNKNOWN_OR_GONE"
-    return current
+        result["process_identity"] = "LIVE" if _same_process(current) else "UNKNOWN_OR_GONE"
+    return result
 
 
 def _group_absent(pid: int) -> bool:
