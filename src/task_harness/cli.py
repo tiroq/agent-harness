@@ -342,7 +342,13 @@ def main(argv: list[str] | None = None) -> int:
         if args.command in {"issue-run", "issue-resume"} and args.execute:
             if status.get("status") == "CANCELLED":
                 return 130
-            return 0 if status.get("status") == "SESSION_EXITED" else 1
+            # A successful Copilot process may have bypassed all role gates.
+            # Never report issue-run success solely from exit_code=0.
+            if status.get("delivery_verdict") == "LOCAL_AUDITED_UNPUBLISHED":
+                return 0
+            if status.get("status") == "SESSION_EXITED":
+                return 4
+            return 1
         if args.command in {"issue-run", "issue-resume"} and str(status.get("verdict", "")).startswith("BLOCKED_"):
             return 4
         if args.command == "issue-reconcile" and str(status.get("recovery", "")).startswith("BLOCKED_"):
